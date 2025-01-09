@@ -11,7 +11,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "postinstall": "prisma generate",
+    "postinstall": "prisma generate --no-hints",
     "db:push": "prisma db push",
     "db:studio": "prisma studio",
     "vercel:env:pull": "npx vercel env pull .env.development.local"
@@ -20,6 +20,10 @@
     "schema": "src/server/prisma/schema.prisma"
   },
   "dependencies": {
+    "@dnd-kit/core": "^6.3.1",
+    "@dnd-kit/modifiers": "^9.0.0",
+    "@dnd-kit/sortable": "^10.0.0",
+    "@dnd-kit/utilities": "^3.2.2",
     "@emotion/cache": "^11.14.0",
     "@emotion/react": "^11.14.0",
     "@emotion/server": "^11.11.0",
@@ -29,9 +33,9 @@
     "@mui/material": "^5.16.14",
     "@next/bundle-analyzer": "^15.1.4",
     "@next/third-parties": "^15.1.4",
-    "@prisma/client": "^5.22.0",
+    "@prisma/client": "~5.22.0",
     "@t3-oss/env-nextjs": "^0.11.1",
-    "@tanstack/react-query": "^5.62.16",
+    "@tanstack/react-query": "^5.63.0",
     "@trpc/client": "11.0.0-rc.688",
     "@trpc/next": "11.0.0-rc.688",
     "@trpc/react-query": "11.0.0-rc.688",
@@ -47,13 +51,12 @@
     "idb-keyval": "^6.2.1",
     "mammoth": "^1.9.0",
     "nanoid": "^5.0.9",
-    "next": "~15.1.4",
+    "next": "^15.1.4",
     "nprogress": "^0.2.0",
-    "pdfjs-dist": "4.9.155",
+    "pdfjs-dist": "4.10.38",
     "plantuml-encoder": "^1.4.0",
     "prismjs": "^1.29.0",
     "react": "^18.3.1",
-    "react-beautiful-dnd": "^13.1.1",
     "react-csv": "^2.2.2",
     "react-dom": "^18.3.1",
     "react-hook-form": "^7.54.2",
@@ -76,7 +79,6 @@
     "zustand": "^5.0.3"
   },
   "devDependencies": {
-    "@cloudflare/puppeteer": "0.0.11",
     "@types/diff": "^7.0.0",
     "@types/node": "^22.10.5",
     "@types/nprogress": "^0.2.3",
@@ -93,14 +95,16 @@
     "eslint": "^9.17.0",
     "eslint-config-next": "^15.1.4",
     "prettier": "^3.4.2",
-    "prisma": "^5.22.0",
-    "typescript": "^5.7.2"
+    "prisma": "~5.22.0",
+    "puppeteer-core": "^23.11.1",
+    "typescript": "^5.7.3"
   },
   "engines": {
     "node": "^22.0.0 || ^20.0.0"
   },
   "overrides": {
     "@types/react": "^18.3.18",
-    "@types/react-dom": "^18.3.5"
+    "@types/react-dom": "^18.3.5",
+    "uri-js": "npm:uri-js-replace"
   }
 }
