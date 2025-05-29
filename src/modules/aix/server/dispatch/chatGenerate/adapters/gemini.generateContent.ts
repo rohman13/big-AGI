@@ -93,6 +93,11 @@ export function aixToGeminiGenerateContent(model: AixAPI_Model, chatGenerate: Ai
   const noTextOutput = !model.acceptsOutputs.includes('text');
   if (model.acceptsOutputs.includes('audio')) {
 
+    // (undocumented) Adapt the request
+    delete payload.systemInstruction;
+    delete payload.generationConfig!.maxOutputTokens; // maxOutputTokens is not supported for audio-only output
+    payload.generationConfig!.temperature = 1;
+
     // activate audio (/only) output
     payload.generationConfig!.responseModalities = noTextOutput ? ['AUDIO'] : ['TEXT', 'AUDIO'];
 
@@ -100,7 +105,7 @@ export function aixToGeminiGenerateContent(model: AixAPI_Model, chatGenerate: Ai
     payload.generationConfig!.speechConfig = {
       voiceConfig: {
         prebuiltVoiceConfig: {
-          voiceName: 'Kore',
+          voiceName: 'Zephyr',
         },
       },
     };
@@ -164,6 +169,7 @@ function _toGeminiContents(chatSequence: AixMessages_ChatMessage[]): GeminiWire_
           parts.push(GeminiWire_ContentParts.TextPart(part.text));
           break;
 
+        case 'inline_audio':
         case 'inline_image':
           parts.push(GeminiWire_ContentParts.InlineDataPart(part.mimeType, part.base64));
           break;
