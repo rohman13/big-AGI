@@ -16,6 +16,7 @@ import { OpenAIWire_API_Images_Generations, OpenAIWire_API_Models_List, OpenAIWi
 import { ListModelsResponse_schema, ModelDescriptionSchema } from '../llm.server.types';
 import { alibabaModelSort, alibabaModelToModelDescription } from './models/alibaba.models';
 import { azureDeploymentFilter, azureDeploymentToModelDescription, azureParseFromDeploymentsAPI } from './models/azure.models';
+import { chutesAIHeuristic, chutesAIModelsToModelDescriptions } from './models/chutesai.models';
 import { deepseekModelFilter, deepseekModelSort, deepseekModelToModelDescription } from './models/deepseek.models';
 import { fastAPIHeuristic, fastAPIModels } from './models/fastapi.models';
 import { fireworksAIHeuristic, fireworksAIModelsToModelDescriptions } from './models/fireworksai.models';
@@ -24,7 +25,7 @@ import { lmStudioModelToModelDescription, localAIModelSortFn, localAIModelToMode
 import { mistralModelsSort, mistralModelToModelDescription } from './models/mistral.models';
 import { openAIModelFilter, openAIModelToModelDescription, openAISortModels } from './models/openai.models';
 import { openPipeModelDescriptions, openPipeModelSort, openPipeModelToModelDescriptions } from './models/openpipe.models';
-import { openRouterModelFamilySortFn, openRouterModelToModelDescription } from './models/openrouter.models';
+import { openRouterInjectVariants, openRouterModelFamilySortFn, openRouterModelToModelDescription } from './models/openrouter.models';
 import { perplexityAIModelDescriptions, perplexityAIModelSort } from './models/perplexity.models';
 import { togetherAIModelsToModelDescriptions } from './models/together.models';
 import { wilreLocalAIModelsApplyOutputSchema, wireLocalAIModelsAvailableOutputSchema, wireLocalAIModelsListOutputSchema } from './localai.wiretypes';
@@ -241,6 +242,10 @@ export const llmOpenAIRouter = createTRPCRouter({
         // [OpenAI]: chat-only models, custom sort, manual mapping
         case 'openai':
 
+          // [ChutesAI] special case for model enumeration
+          if (chutesAIHeuristic(access.oaiHost))
+            return { models: chutesAIModelsToModelDescriptions(openAIModels) };
+
           // [FireworksAI] special case for model enumeration
           if (fireworksAIHeuristic(access.oaiHost))
             return { models: fireworksAIModelsToModelDescriptions(openAIModels) };
@@ -273,7 +278,8 @@ export const llmOpenAIRouter = createTRPCRouter({
           models = openAIModels
             .sort(openRouterModelFamilySortFn)
             .map(openRouterModelToModelDescription)
-            .filter(desc => !!desc);
+            .filter(desc => !!desc)
+            .reduce(openRouterInjectVariants, [] as ModelDescriptionSchema[]);
           break;
 
       }
