@@ -245,6 +245,7 @@ export namespace AixWire_Content {
     parts: z.array(z.discriminatedUnion('pt', [
       AixWire_Parts.TextPart_schema,
       AixWire_Parts.DocPart_schema, // Jan 10, 2025: added support for Docs in AIX system
+      AixWire_Parts.InlineImagePart_schema, // Sept 12, 2025: added support for Inline Images in AIX system
       AixWire_Parts.MetaCacheControl_schema,
     ])),
   });
@@ -410,6 +411,7 @@ export namespace AixWire_API {
     vndOaiResponsesAPI: z.boolean().optional(),
     vndOaiReasoningEffort: z.enum(['minimal', 'low', 'medium', 'high']).optional(),
     vndOaiRestoreMarkdown: z.boolean().optional(),
+    vndOaiVerbosity: z.enum(['low', 'medium', 'high']).optional(),
     vndOaiWebSearchContext: z.enum(['low', 'medium', 'high']).optional(),
     vndPerplexityDateFilter: z.enum(['unfiltered', '1m', '3m', '6m', '1y']).optional(),
     vndPerplexitySearchMode: z.enum(['default', 'academic']).optional(),
