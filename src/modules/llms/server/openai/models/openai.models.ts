@@ -1,6 +1,7 @@
 import type { OpenAIWire_API_Models_List } from '~/modules/aix/server/dispatch/wiretypes/openai.wiretypes';
 
 import { LLM_IF_HOTFIX_NoStream, LLM_IF_HOTFIX_NoTemperature, LLM_IF_HOTFIX_StripImages, LLM_IF_HOTFIX_Sys0ToUsr0, LLM_IF_OAI_Chat, LLM_IF_OAI_Fn, LLM_IF_OAI_Json, LLM_IF_OAI_PromptCaching, LLM_IF_OAI_Realtime, LLM_IF_OAI_Reasoning, LLM_IF_OAI_Responses, LLM_IF_OAI_Vision, LLM_IF_Outputs_Audio, LLM_IF_Tools_WebSearch } from '~/common/stores/llms/llms.types';
+import { Release } from '~/common/app.release';
 
 import type { ModelDescriptionSchema } from '../../llm.server.types';
 import { fromManualMapping, ManualMappings } from './models.data';
@@ -30,7 +31,7 @@ export const hardcodedOpenAIVariants: { [modelId: string]: Partial<ModelDescript
 
 
 // configuration
-const DEV_DEBUG_OPENAI_MODELS = false; // set to true to check superfluous and missing models
+const DEV_DEBUG_OPENAI_MODELS = /* (Release.TenantSlug as any) === 'staging' || */ Release.IsNodeDevBuild;
 
 
 // [OpenAI] Known Chat Models
@@ -75,6 +76,35 @@ export const _knownOpenAIChatModels: ManualMappings = [
     parameterSpecs: [{ paramId: 'llmVndOaiReasoningEffort4' }, { paramId: 'llmVndOaiWebSearchContext' }, { paramId: 'llmVndOaiRestoreMarkdown' }, { paramId: 'llmVndOaiVerbosity' }, { paramId: 'llmVndOaiImageGeneration' }],
     chatPrice: { input: 1.25, cache: { cType: 'oai-ac', read: 0.125 }, output: 10 },
     benchmark: { cbaElo: 1442 },
+  },
+
+  // GPT-5 Pro
+  {
+    idPrefix: 'gpt-5-pro-2025-10-06',
+    label: 'GPT-5 Pro (2025-10-06)',
+    description: 'Version of GPT-5 that uses more compute to produce smarter and more precise responses. Designed for tough problems.',
+    contextWindow: 400000,
+    maxCompletionTokens: 272000,
+    trainingDataCutoff: 'Sep 30, 2024',
+    interfaces: [LLM_IF_OAI_Responses, LLM_IF_OAI_Chat, LLM_IF_OAI_Vision, LLM_IF_OAI_Fn, LLM_IF_OAI_Json, LLM_IF_OAI_Reasoning, LLM_IF_HOTFIX_NoTemperature],
+    // parameterSpecs: [{ paramId: 'llmForceNoStream' }, { paramId: 'llmVndOaiReasoningEffort' }],
+    chatPrice: { input: 15, output: 120 },
+    // benchmark: has not been measured yet
+  },
+  {
+    idPrefix: 'gpt-5-pro',
+    label: 'GPT-5 Pro',
+    description: 'Version of GPT-5 with more compute for better responses. Points to gpt-5-pro-2025-10-06.',
+    symLink: 'gpt-5-pro-2025-10-06',
+    hidden: true, // prefer versioned
+    // copied from symlinked
+    contextWindow: 400000,
+    maxCompletionTokens: 272000,
+    trainingDataCutoff: 'Sep 30, 2024',
+    interfaces: [LLM_IF_OAI_Responses, LLM_IF_OAI_Chat, LLM_IF_OAI_Vision, LLM_IF_OAI_Fn, LLM_IF_OAI_Json, LLM_IF_OAI_Reasoning],
+    // parameterSpecs: [{ paramId: 'llmForceNoStream' }, { paramId: 'llmVndOaiReasoningEffort' }],
+    chatPrice: { input: 15, output: 120 },
+    // benchmark: has not been measured yet
   },
 
   // GPT-5 Chat Latest
@@ -1058,6 +1088,8 @@ export function openAIModelToModelDescription(modelId: string, modelCreated: num
 const _manualOrderingIdPrefixes = [
   // GPT-5
   'gpt-5-20',
+  'gpt-5-pro-20',
+  'gpt-5-pro',
   'gpt-5-mini-20',
   'gpt-5-nano-20',
   'gpt-5-chat-latest',
@@ -1216,15 +1248,15 @@ export function openaiDevCheckForModelsOverlap_DEV(wireModels: unknown, parsedMo
 
     if (missingModelIds.length > 0) {
       // Split missing models: filtered out vs truly missing
-      const filteredOutModels = missingModelIds.filter((id: string) =>
-        openAIModelsDenyList.some(deny => id.includes(deny))
-      );
+      // const filteredOutModels = missingModelIds.filter((id: string) =>
+      //   openAIModelsDenyList.some(deny => id.includes(deny))
+      // );
       const trulyMissingModels = missingModelIds.filter((id: string) =>
         !openAIModelsDenyList.some(deny => id.includes(deny))
       );
 
-      if (filteredOutModels.length > 0)
-        console.warn(`[DEV] OpenAI: filtered out models: [\n  - ${filteredOutModels.join('\n  - ')}\n]`);
+      // if (filteredOutModels.length > 0)
+      //   console.warn(`[DEV] OpenAI: filtered out models: [\n  - ${filteredOutModels.join('\n  - ')}\n]`);
 
       if (trulyMissingModels.length > 0)
         console.warn(`[DEV] OpenAI: truly missing model definitions[\n  - ${trulyMissingModels.join('\n  - ')}\n]`);
