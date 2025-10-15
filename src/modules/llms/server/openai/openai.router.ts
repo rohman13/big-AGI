@@ -88,9 +88,9 @@ const _createImageConfigBase = z.object({
   user: z.string().optional(),
 });
 
-// GPT Image
+// GPT Image family (gpt-image-1, gpt-image-1-mini share all parameters)
 const createImageConfigGI = _createImageConfigBase.extend({
-  model: z.literal('gpt-image-1'),
+  model: z.enum(['gpt-image-1', 'gpt-image-1-mini']),
   prompt: z.string().max(32000),
   size: z.enum([/*'auto',*/ '1024x1024', '1536x1024', '1024x1536']),
   quality: z.enum(['high', 'medium', 'low']).optional(),
@@ -124,7 +124,7 @@ const createImagesInputSchema = z.object({
   access: openAIAccessSchema,
   // for this object sync with <> OpenAIWire_API_Images_Generations.Request_schema
   generationConfig: z.discriminatedUnion('model', [
-    createImageConfigGI,
+    createImageConfigGI, // handles both gpt-image-1 and gpt-image-1-mini
     createImageConfigD3,
     createImageConfigD2,
   ]),
@@ -302,10 +302,11 @@ export const llmOpenAIRouter = createTRPCRouter({
       const { access, generationConfig: config, editConfig } = input;
 
       // Determine if this is an edit request
-      const isEdit = !!editConfig?.inputImages?.length && config.model === 'gpt-image-1';
+      const isGptImageFamily = config.model === 'gpt-image-1' || config.model === 'gpt-image-1-mini';
+      const isEdit = !!editConfig?.inputImages?.length && isGptImageFamily;
 
       // validate input
-      if (isEdit && config.model !== 'gpt-image-1')
+      if (isEdit && !isGptImageFamily)
         throw new TRPCError({ code: 'BAD_REQUEST', message: `Image editing is only supported for GPT Image models` });
       if (config.model === 'dall-e-3' && config.count > 1)
         throw new TRPCError({ code: 'BAD_REQUEST', message: `[OpenAI Issue] dall-e-3 model does not support more than 1 image` });
