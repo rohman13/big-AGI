@@ -417,6 +417,7 @@ export namespace AixWire_API {
     vndGeminiGoogleSearch: z.enum(['unfiltered', '1d', '1w', '1m', '6m', '1y']).optional(),
     vndGeminiShowThoughts: z.boolean().optional(),
     vndGeminiThinkingBudget: z.number().optional(),
+    vndMoonshotWebSearch: z.enum(['auto']).optional(),
     vndOaiResponsesAPI: z.boolean().optional(),
     vndOaiReasoningEffort: z.enum(['minimal', 'low', 'medium', 'high']).optional(),
     vndOaiRestoreMarkdown: z.boolean().optional(),
@@ -471,6 +472,7 @@ export namespace AixWire_API {
       // streaming AI operations
       'ai-diagram',               // making a diagram - messageId
       'ai-flattener',             // flattening a thread - messageId of the first message
+      'aifn-image-caption',       // generating image captions - attachmentId
       'beam-gather',              // fusing beam rays - fusionId
       'beam-scatter',             // scattering beam rays - rayId
       'call',                     // having a phone conversation - messageId of the first message
@@ -568,10 +570,11 @@ export namespace AixWire_Particles {
 
   // ChatControl
 
-  type ChatControlOp =
+  export type ChatControlOp =
   // | { cg: 'start' } // not really used for now
     | { cg: 'end', reason: CGEndReason, tokenStopReason: GCTokenStopReason }
     | { cg: 'issue', issueId: CGIssueId, issueText: string }
+    | { cg: 'retry-reset', rScope: 'srv-dispatch' | 'srv-op' | 'cli-ll', rShallClear: boolean, reason: string, attempt: number, maxAttempts: number, delayMs: number, causeHttp?: number, causeConn?: string }
     | { cg: 'set-metrics', metrics: CGSelectMetrics }
     | { cg: 'set-model', name: string }
     | { cg: 'set-upstream-handle', handle: { uht: 'vnd.oai.responses', responseId: string, expiresAt: number | null } }

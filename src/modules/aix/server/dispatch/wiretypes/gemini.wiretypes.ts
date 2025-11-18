@@ -432,7 +432,8 @@ export namespace GeminiWire_Safety {
     /** Optional. If set, the prompt was blocked and no candidates are returned. */
     blockReason: BlockReason_enum.optional(),
     /** At most one rating per category. */
-    safetyRatings: z.array(SafetyRating_schema),
+    safetyRatings: z.array(SafetyRating_schema)
+      .optional(), // [Gemini, 2025-11-09] Optional because PROHIBITED_CONTENT blocks omit safetyRatings
   });
 
 }
@@ -784,11 +785,15 @@ export namespace GeminiWire_API_Generate_Content {
     promptFeedback: GeminiWire_Safety.PromptFeedback_schema.optional(), // rarely sent (only on violations?)
     /**
      * Metadata on the generation requests' token usage.
-     * Note: seems to be present on all packets now, so we're commending the .optional()
+     * Note: seems to be present on all packets now,
+     *       BUT we keep .optional() for proxy error cases where infra errors are sent as message look-alikes
+     *       (initially it was commented out)
      */
-    usageMetadata: UsageMetadata_schema, // .optional()
+    usageMetadata: UsageMetadata_schema
+      .optional(), // [Gemini, 2025-11-07] relaxed to optional for proxy error cases
     /** Real model version used to generate the response (what we got, not what we asked for). */
-    modelVersion: z.string(),
+    modelVersion: z.string()
+      .optional(), // [Gemini, 2025-11-07] relaxed to optional for proxy error cases
   });
 
 }
