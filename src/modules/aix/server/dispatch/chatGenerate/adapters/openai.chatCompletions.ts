@@ -1,3 +1,5 @@
+import * as z from 'zod/v4';
+
 import type { OpenAIDialects } from '~/modules/llms/server/openai/openai.access';
 
 import { AixAPI_Model, AixAPIChatGenerate_Request, AixMessages_ChatMessage, AixMessages_SystemMessage, AixParts_DocPart, AixParts_InlineAudioPart, AixParts_MetaInReferenceToPart, AixTools_ToolDefinition, AixTools_ToolsPolicy } from '../../../api/aix.wiretypes';
@@ -108,12 +110,13 @@ export function aixToOpenAIChatCompletions(openAIDialect: OpenAIDialects, model:
   const outputsText = model.acceptsOutputs.includes('text');
   const outputsAudio = model.acceptsOutputs.includes('audio');
   const outputsImages = model.acceptsOutputs.includes('image');
-  if (openAIDialect === 'openai' && (outputsAudio || outputsImages)) {
+  if ((openAIDialect === 'openai' || openAIDialect === 'openrouter') && (outputsAudio || outputsImages)) {
     // set output modalities
     const modalities = new Set(payload.modalities || []);
     if (outputsText) modalities.add('text');
     if (outputsAudio) modalities.add('audio');
-    // if (outputsImages) modalities.add('image');
+    // [OpenRouter, 2025-12-31] Extension for image output through the OpenAI ChatCompletions protocol
+    if (openAIDialect === 'openrouter' && outputsImages) modalities.add('image');
     payload.modalities = Array.from(modalities);
 
     // configure audio output
@@ -122,6 +125,15 @@ export function aixToOpenAIChatCompletions(openAIDialect: OpenAIDialects, model:
         voice: 'alloy', // FIXME: have the voice be selectable
         format: 'pcm16', // only supported value for streaming
       };
+
+    // [OpenRouter, 2025-12-31] Extension for image output configuration through OpenAI ChatCompletions protocol
+    if (openAIDialect === 'openrouter' && (model.vndGeminiAspectRatio || model.vndGeminiImageSize)) {
+      payload.image_config = { ...payload.image_config || {} };
+      if (model.vndGeminiAspectRatio)
+        payload.image_config.aspect_ratio = model.vndGeminiAspectRatio;
+      if (model.vndGeminiImageSize)
+        payload.image_config.image_size = model.vndGeminiImageSize;
+    }
   }
 
   // [OpenAI] Vendor-specific reasoning effort, for o1 models only as of 2024-12-24
@@ -169,36 +181,9 @@ export function aixToOpenAIChatCompletions(openAIDialect: OpenAIDialects, model:
       // search_prompt: undefined, // could be configurable in the future
     }];
 
-  // [xAI] Vendor-specific extensions for Live Search
-  if (openAIDialect === 'xai' && model.vndXaiSearchMode && model.vndXaiSearchMode !== 'off') {
-    const search_parameters: any = {
-      return_citations: true,
-    };
-
-    // mode defaults to 'auto' if not specified, so only include if not 'auto'
-    if (model.vndXaiSearchMode && model.vndXaiSearchMode !== 'auto')
-      search_parameters.mode = model.vndXaiSearchMode;
-
-    if (model.vndXaiSearchSources) {
-      const sources = model.vndXaiSearchSources
-        .split(',')
-        .map(s => s.trim())
-        .filter(s => !!s);
-
-      // only omit sources if it's the default ('web' and 'x')
-      const isDefaultSources = sources.length === 2 && sources.includes('web') && sources.includes('x');
-      if (!isDefaultSources)
-        search_parameters.sources = sources.map(s => ({ type: s }));
-    }
-
-    if (model.vndXaiSearchDateFilter && model.vndXaiSearchDateFilter !== 'unfiltered') {
-      const fromDate = _convertSimpleDateFilterToISO(model.vndXaiSearchDateFilter);
-      if (fromDate)
-        search_parameters.from_date = fromDate;
-    }
-
-    payload.search_parameters = search_parameters;
-  }
+  // [OpenRouter, 2025-01-20] Verbosity - maps to output_config.effort for Anthropic Claude Opus 4.5, GPT-5 family
+  if (openAIDialect === 'openrouter' && model.vndOaiVerbosity)
+    payload.verbosity = model.vndOaiVerbosity;
 
   // [Moonshot] Kimi's $web_search builtin function
   if (openAIDialect === 'moonshot' && model.vndMoonshotWebSearch === 'auto' && !skipWebSearchDueToCustomTools)
@@ -243,13 +228,13 @@ export function aixToOpenAIChatCompletions(openAIDialect: OpenAIDialects, model:
     }
     // Gemini via OpenRouter
     else if (model.vndGeminiThinkingBudget !== undefined)
-      payload.reasoning = { max_tokens: model.vndGeminiThinkingBudget || 8192 };
-    // OpenAI via OpenRouter
-    else if (model.vndOaiReasoningEffort && model.vndOaiReasoningEffort !== 'minimal' && model.vndOaiReasoningEffort !== 'none')
+      payload.reasoning = { max_tokens: model.vndGeminiThinkingBudget ?? 8192 };
+    // OpenAI via OpenRouter - all effort levels including 'none' and 'minimal' are valid
+    else if (model.vndOaiReasoningEffort)
       payload.reasoning = { effort: model.vndOaiReasoningEffort };
 
     // FIX double-reasoning request - remove reasoning_effort after transferring it to reasoning (unless already set)
-    if (payload.reasoning_effort && payload.reasoning_effort !== 'minimal' && payload.reasoning_effort !== 'none') {
+    if (payload.reasoning_effort) {
       // we don't know which one takes precedence, so we prioritize .reasoning (OpenRouter) even if .reasoning_effort (OpenAI) is present
       if (!payload.reasoning)
         payload.reasoning = { effort: payload.reasoning_effort };
@@ -269,8 +254,8 @@ export function aixToOpenAIChatCompletions(openAIDialect: OpenAIDialects, model:
   // Preemptive error detection with server-side payload validation before sending it upstream
   const validated = OpenAIWire_API_Chat_Completions.Request_schema.safeParse(payload);
   if (!validated.success) {
-    console.warn('OpenAI: invalid chatCompletions payload. Error:', validated.error);
-    throw new Error(`Invalid sequence for OpenAI models: ${validated.error.issues?.[0]?.message || validated.error.message || validated.error}.`);
+    console.warn('[DEV] OpenAI: invalid chatCompletions payload. Error:', { valError: validated.error });
+    throw new Error(`Invalid request for OpenAI-compatible models: ${z.prettifyError(validated.error)}`);
   }
 
   // if (hotFixUseDeprecatedFunctionCalls)
@@ -749,24 +734,3 @@ function _convertPerplexityDateFilter(filter: string): string {
   }
 }
 
-function _convertSimpleDateFilterToISO(filter: '1d' | '1w' | '1m' | '6m' | '1y'): string {
-  const now = new Date();
-  switch (filter) {
-    case '1d':
-      now.setDate(now.getDate() - 1);
-      break;
-    case '1w':
-      now.setDate(now.getDate() - 7);
-      break;
-    case '1m':
-      now.setMonth(now.getMonth() - 1);
-      break;
-    case '6m':
-      now.setMonth(now.getMonth() - 6);
-      break;
-    case '1y':
-      now.setFullYear(now.getFullYear() - 1);
-      break;
-  }
-  return now.toISOString().split('T')[0];
-}

@@ -1,5 +1,6 @@
 import * as z from 'zod/v4';
 
+import type { DModelParameterId } from '~/common/stores/llms/llms.parameters'; // imported for making sure we sync
 import { LLMS_ALL_INTERFACES } from '~/common/stores/llms/llms.types';
 
 
@@ -94,6 +95,7 @@ const ModelParameterSpec_schema = z.object({
     'llmVndGeminiShowThoughts',
     'llmVndGeminiThinkingBudget',
     'llmVndGeminiThinkingLevel',
+    'llmVndGeminiThinkingLevel4',
     // 'llmVndGeminiUrlContext',
     // Moonshot
     'llmVndMoonshotWebSearch',
@@ -107,16 +109,19 @@ const ModelParameterSpec_schema = z.object({
     'llmVndOaiWebSearchContext',
     'llmVndOaiWebSearchGeolocation',
     'llmVndOaiImageGeneration',
+    'llmVndOaiCodeInterpreter',
     // OpenRouter
     'llmVndOrtWebSearch',
     // Perplexity
     'llmVndPerplexityDateFilter',
     'llmVndPerplexitySearchMode',
     // xAI
-    'llmVndXaiSearchMode',
-    'llmVndXaiSearchSources',
-    'llmVndXaiSearchDateFilter',
-  ]),
+    'llmVndXaiCodeExecution',
+    'llmVndXaiSearchInterval',
+    'llmVndXaiWebSearch',
+    'llmVndXaiXSearch',
+    'llmVndXaiXSearchHandles',
+  ] satisfies DModelParameterId[]),
   required: z.boolean().optional(),
   hidden: z.boolean().optional(),
   initialValue: z.number().or(z.string()).or(z.boolean()).nullable().optional(),
@@ -128,13 +133,13 @@ export const ModelDescription_schema = z.object({
   id: z.string(),
   idVariant: z.string().optional(), // only used on the client by '_createDLLMFromModelDescription' to instantiate 'unique' copies of the same model
   label: z.string(),
-  created: z.number().optional(),
-  updated: z.number().optional(),
+  created: z.int().optional(),
+  updated: z.int().optional(),
   description: z.string(),
-  contextWindow: z.number().nullable(),
+  contextWindow: z.int().nullable(),
   interfaces: z.array(z.union([z.enum(LLMS_ALL_INTERFACES), z.string()])), // backward compatibility: to not Break client-side interface parsing on newer server
   parameterSpecs: z.array(ModelParameterSpec_schema).optional(),
-  maxCompletionTokens: z.number().optional(),
+  maxCompletionTokens: z.int().optional(),
   // rateLimits: rateLimitsSchema.optional(),
   trainingDataCutoff: z.string().optional(),
   benchmark: BenchmarksScores_schema.optional(),

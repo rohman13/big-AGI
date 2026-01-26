@@ -4,6 +4,7 @@ import type { AixWire_Particles } from '../../../api/aix.wiretypes';
 import type { ChatGenerateParseFunction } from '../chatGenerate.dispatch';
 import type { IParticleTransmitter } from './IParticleTransmitter';
 import { IssueSymbols } from '../ChatGenerateTransmitter';
+import { aixResilientUnknownValue } from '../../../api/aix.resilience';
 
 import { AnthropicWire_API_Message_Create } from '../../wiretypes/anthropic.wiretypes';
 import { RequestRetryError } from '../chatGenerate.retrier';
@@ -11,6 +12,8 @@ import { RequestRetryError } from '../chatGenerate.retrier';
 
 // configuration
 const ANTHROPIC_DEBUG_EVENT_SEQUENCE = false; // true: shows the sequence of events
+// NOTE: the following weakens protocol validation - remove if possible. testing with web search active to see if blocks come out of order
+const ANTHROPIC_FIX_REUSED_BLOCK_INDEX = true; // [Anthropic, 2026-01-12] Block Start Index issue workaround
 
 
 /**
@@ -139,9 +142,17 @@ export function createAnthropicMessageParser(): ChatGenerateParseFunction {
         if (!responseMessage)
           throw new Error('Unexpected content_block_start');
 
-        const { index, content_block } = AnthropicWire_API_Message_Create.event_ContentBlockStart_schema.parse(JSON.parse(eventData));
+        const { index: requestedIndex, content_block } = AnthropicWire_API_Message_Create.event_ContentBlockStart_schema.parse(JSON.parse(eventData));
+
+        // [Anthropic, 2026-01-12] Block Start Index issue
+        let index = requestedIndex;
         if (responseMessage.content[index] !== undefined)
-          throw new Error(`Unexpected content block start location (${index})`);
+          if (ANTHROPIC_FIX_REUSED_BLOCK_INDEX) {
+            // Workaround: Anthropic server tools reuse indices - promote to next available
+            index = responseMessage.content.length;
+            // console.log(`[Anthropic] content_block_start: index ${requestedIndex} occupied, promoting to ${index}`);
+          } else
+            throw new Error(`Unexpected content block start location (${requestedIndex})`);
         responseMessage.content[index] = content_block;
 
         if (ANTHROPIC_DEBUG_EVENT_SEQUENCE) {
@@ -380,7 +391,8 @@ export function createAnthropicMessageParser(): ChatGenerateParseFunction {
 
           default:
             const _exhaustiveCheck: never = content_block;
-            throw new Error(`Unexpected content block type: ${(content_block as any).type}`);
+            aixResilientUnknownValue('Anthropic', 'contentBlockType', (content_block as any)?.type);
+            break;
         }
 
         // set separator flag when server tools complete (text after tools needs visual separation)
@@ -473,7 +485,8 @@ export function createAnthropicMessageParser(): ChatGenerateParseFunction {
 
           default:
             const _exhaustiveCheck: never = delta;
-            throw new Error(`Unexpected content block delta type: ${(delta as any).type}`);
+            aixResilientUnknownValue('Anthropic', 'deltaType', (delta as any)?.type);
+            break;
         }
         break;
       }
@@ -576,7 +589,8 @@ export function createAnthropicMessageParser(): ChatGenerateParseFunction {
 
       default:
         if (ANTHROPIC_DEBUG_EVENT_SEQUENCE) console.log(`ant unknown event: ${eventName}`);
-        throw new Error(`Unexpected event name: ${eventName}`);
+        aixResilientUnknownValue('Anthropic', 'eventName', eventName);
+        break;
     }
   };
 }
@@ -833,7 +847,8 @@ export function createAnthropicMessageParserNS(): ChatGenerateParseFunction {
 
         default:
           const _exhaustiveCheck: never = contentBlock;
-          throw new Error(`Unexpected content block type: ${(contentBlock as any).type}`);
+          aixResilientUnknownValue('Anthropic-NS', 'contentBlockType', (contentBlock as any)?.type);
+          break;
       }
 
       // set separator flag when server tools complete (text after tools needs visual separation)
