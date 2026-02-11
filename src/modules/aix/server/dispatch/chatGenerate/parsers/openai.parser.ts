@@ -535,8 +535,8 @@ export function createOpenAIChatCompletionsParserNS(): ChatGenerateParseFunction
       }
 
       // [OpenRouter, 2025-12-31] Extension for receiving Images (non-streaming)
-      if ((message as any).images && Array.isArray((message as any).images)) {
-        for (const imageObj of (message as any).images) {
+      if (message.images && Array.isArray(message.images)) {
+        for (const imageObj of message.images) {
           if (imageObj?.image_url?.url) {
             const imageUrl = imageObj.image_url.url;
             // Extract mime type and base64 data from data URL: "data:image/png;base64,..."
@@ -702,7 +702,7 @@ function _forwardOpenRouterDataError(parsedData: any, pt: IParticleTransmitter) 
   const { error } = parsedData;
 
   // require .message/.code to consider this a valid error object
-  if (!(typeof error === 'object') || !('message' in error) || !('code' in error)) {
+  if (!(typeof error === 'object') || !('message' in error) /*|| !('code' in error) */) { // .code is optional for LM Studio and others
     console.log('AIX: OpenAI-dispatch ignored error:', { error });
     return false;
   }

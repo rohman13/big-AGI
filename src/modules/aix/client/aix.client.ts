@@ -1,7 +1,7 @@
 import { findServiceAccessOrThrow } from '~/modules/llms/vendors/vendor.helpers';
 
 import type { MaybePromise } from '~/common/types/useful.types';
-import { DLLM, DLLMId, getLLMPricing, LLM_IF_HOTFIX_NoTemperature, LLM_IF_OAI_Responses, LLM_IF_Outputs_Audio, LLM_IF_Outputs_Image, LLM_IF_Outputs_NoText } from '~/common/stores/llms/llms.types';
+import { DLLM, DLLMId, LLM_IF_HOTFIX_NoTemperature, LLM_IF_OAI_Responses, LLM_IF_Outputs_Audio, LLM_IF_Outputs_Image, LLM_IF_Outputs_NoText } from '~/common/stores/llms/llms.types';
 import { DMessage, DMessageGenerator, messageSetGeneratorAIX_AutoLabel } from '~/common/stores/chat/chat.message';
 import { DMetricsChatGenerate_Lg, metricsChatGenerateLgToMd, metricsComputeChatGenerateCostsMd } from '~/common/stores/metrics/metrics.chatgenerate';
 import { DModelParameterValues, getAllModelParameterValues } from '~/common/stores/llms/llms.parameters';
@@ -10,6 +10,7 @@ import { createErrorContentFragment, DMessageContentFragment, DMessageErrorPart,
 import { findLLMOrThrow } from '~/common/stores/llms/store-llms';
 import { getAixInspectorEnabled } from '~/common/stores/store-ui';
 import { getLabsDevNoStreaming } from '~/common/stores/store-ux-labs';
+import { llmChatPricing_adjusted } from '~/common/stores/llms/llms.pricing';
 import { metricsStoreAddChatGenerate } from '~/common/stores/metrics/store-metrics';
 import { stripUndefined } from '~/common/util/objectUtils';
 import { webGeolocationCached } from '~/common/util/webGeolocationUtils';
@@ -21,6 +22,7 @@ import { AixStreamRetry } from './aix.client.retry';
 import { ContentReassembler } from './ContentReassembler';
 import { aixCGR_ChatSequence_FromDMessagesOrThrow, aixCGR_FromSimpleText, aixCGR_SystemMessage_FromDMessageOrThrow, AixChatGenerate_TextMessages, clientHotFixGenerateRequest_ApplyAll } from './aix.client.chatGenerateRequest';
 import { aixClassifyStreamingError } from './aix.client.errors';
+import { aixClientDebuggerGetRBO } from './debugger/memstore-aix-client-debugger';
 import { withDecimator } from './withDecimator';
 
 
@@ -48,8 +50,9 @@ export function aixCreateModelFromLLMOptions(
   // destructure input with the overrides
   const {
     llmRef, llmTemperature, llmResponseTokens, llmTopP, llmForceNoStream,
-    llmVndAnt1MContext, llmVndAntSkills, llmVndAntThinkingBudget, llmVndAntWebFetch, llmVndAntWebSearch, llmVndAntEffort,
+    llmVndAnt1MContext, llmVndAntInfSpeed, llmVndAntSkills, llmVndAntThinkingBudget, llmVndAntWebFetch, llmVndAntWebSearch, llmVndAntEffort, llmVndAntEffortMax,
     llmVndGeminiAspectRatio, llmVndGeminiImageSize, llmVndGeminiCodeExecution, llmVndGeminiComputerUse, llmVndGeminiGoogleSearch, llmVndGeminiMediaResolution, llmVndGeminiShowThoughts, llmVndGeminiThinkingBudget, llmVndGeminiThinkingLevel, llmVndGeminiThinkingLevel4,
+    llmVndMoonReasoningEffort, // -> mapped to vndOaiReasoningEffort below
     // llmVndMoonshotWebSearch,
     llmVndOaiReasoningEffort, llmVndOaiReasoningEffort4, llmVndOaiReasoningEffort52, llmVndOaiReasoningEffort52Pro, llmVndOaiRestoreMarkdown, llmVndOaiVerbosity, llmVndOaiWebSearchContext, llmVndOaiWebSearchGeolocation, llmVndOaiImageGeneration, llmVndOaiCodeInterpreter,
     llmVndOrtWebSearch,
@@ -103,12 +106,13 @@ export function aixCreateModelFromLLMOptions(
     ...(llmResponseTokens /* null: similar to undefined, will omit the value */ ? { maxTokens: llmResponseTokens } : {}),
     ...(llmTopP !== undefined ? { topP: llmTopP } : {}),
     ...(llmForceNoStream ? { forceNoStream: true } : {}),
-    ...(llmVndAntThinkingBudget !== undefined ? { vndAntThinkingBudget: llmVndAntThinkingBudget } : {}),
+    ...(llmVndAntThinkingBudget !== undefined ? { vndAntThinkingBudget: llmVndAntThinkingBudget === -1 ? 'adaptive' as const : llmVndAntThinkingBudget } : {}),
     ...(llmVndAnt1MContext ? { vndAnt1MContext: llmVndAnt1MContext } : {}),
+    ...(llmVndAntInfSpeed === 'fast' ? { vndAntInfSpeed: 'fast' } : {}),
     ...(llmVndAntSkills ? { vndAntSkills: llmVndAntSkills } : {}),
     ...(llmVndAntWebFetch === 'auto' ? { vndAntWebFetch: llmVndAntWebFetch } : {}),
     ...(llmVndAntWebSearch === 'auto' ? { vndAntWebSearch: llmVndAntWebSearch } : {}),
-    ...(llmVndAntEffort ? { vndAntEffort: llmVndAntEffort } : {}),
+    ...((llmVndAntEffortMax || llmVndAntEffort) ? { vndAntEffort: llmVndAntEffortMax || llmVndAntEffort } : {}),
     ...(llmVndGeminiAspectRatio ? { vndGeminiAspectRatio: llmVndGeminiAspectRatio } : {}),
     ...(llmVndGeminiCodeExecution === 'auto' ? { vndGeminiCodeExecution: llmVndGeminiCodeExecution } : {}),
     ...(llmVndGeminiComputerUse ? { vndGeminiComputerUse: llmVndGeminiComputerUse } : {}),
@@ -122,6 +126,8 @@ export function aixCreateModelFromLLMOptions(
     ...(llmVndGeminiThinkingBudget !== undefined ? { vndGeminiThinkingBudget: llmVndGeminiThinkingBudget } : {}),
     ...((llmVndGeminiThinkingLevel || llmVndGeminiThinkingLevel4) ? { vndGeminiThinkingLevel: llmVndGeminiThinkingLevel4 || llmVndGeminiThinkingLevel } : {}), // map both 2-level and 4-level thinking params to the same wire field
     // ...(llmVndGeminiUrlContext === 'auto' ? { vndGeminiUrlContext: llmVndGeminiUrlContext } : {}),
+    // [Moonshot] Map to vndOaiReasoningEffort - adapter converts to thinking format
+    ...((llmVndMoonReasoningEffort && !llmVndOaiReasoningEffort) ? { vndOaiReasoningEffort: llmVndMoonReasoningEffort } : {}),
     // ...(llmVndMoonshotWebSearch === 'auto' ? { vndMoonshotWebSearch: 'auto' } : {}),
     ...(llmVndOaiResponsesAPI ? { vndOaiResponsesAPI: true } : {}),
     ...((llmVndOaiReasoningEffort52Pro || llmVndOaiReasoningEffort52 || llmVndOaiReasoningEffort4 || llmVndOaiReasoningEffort) ? {
@@ -306,7 +312,7 @@ export async function aixChatGenerateText_Simple(
 
 
   // Client-side late stage model HotFixes
-  const { shallDisableStreaming } = clientHotFixGenerateRequest_ApplyAll(llm.interfaces, aixChatGenerate, llmParameters.llmRef || llm.id);
+  const { shallDisableStreaming } = await clientHotFixGenerateRequest_ApplyAll(llm.interfaces, aixChatGenerate, llmParameters.llmRef || llm.id);
   if (shallDisableStreaming || aixModel.forceNoStream)
     aixStreaming = false;
 
@@ -465,7 +471,7 @@ export async function aixChatGenerateContent_DMessage_orThrow<TServiceSettings e
   const aixModel = aixCreateModelFromLLMOptions(llm.interfaces, llmParameters, clientOptions?.llmOptionsOverride, llmId);
 
   // Client-side late stage model HotFixes
-  const { shallDisableStreaming } = clientHotFixGenerateRequest_ApplyAll(llm.interfaces, aixChatGenerate, llmParameters.llmRef || llm.id);
+  const { shallDisableStreaming } = await clientHotFixGenerateRequest_ApplyAll(llm.interfaces, aixChatGenerate, llmParameters.llmRef || llm.id);
   if (shallDisableStreaming || aixModel.forceNoStream)
     aixStreaming = false;
 
@@ -537,7 +543,8 @@ function _llToDMessageGuts(src: AixChatGenerateContent_LL, dest: AixChatGenerate
 function _updateGeneratorCostsInPlace(generator: DMessageGenerator, llm: DLLM, debugCostSource: string) {
   // Compute costs
   const logLlmRefId = getAllModelParameterValues(llm.initialParameters, llm.userParameters).llmRef || llm.id;
-  const costs = metricsComputeChatGenerateCostsMd(generator.metrics, getLLMPricing(llm)?.chat, logLlmRefId);
+  const adjChatPricing = llmChatPricing_adjusted(llm);
+  const costs = metricsComputeChatGenerateCostsMd(generator.metrics, adjChatPricing, logLlmRefId);
   if (!costs) {
     // FIXME: we shall warn that the costs are missing, as the only way to get pricing is through surfacing missing prices
     return;
@@ -626,6 +633,10 @@ async function _aixChatGenerateContent_LL(
   const inspectorTransport = inspectorEnabled ? aixAccess.clientSideFetch ? 'csf' as const : 'trpc' as const : undefined;
   const inspectorContext = inspectorEnabled ? { contextName: aixContext.name, contextRef: aixContext.ref } : undefined;
 
+  // [DEV] Inspector - request body override
+  const requestBodyOverrideJson = inspectorEnabled && aixClientDebuggerGetRBO();
+  const debugRequestBodyOverride = !requestBodyOverrideJson ? false : JSON.parse(requestBodyOverrideJson);
+
   /**
    * FIXME: implement client selection of resumability - aixAccess option?
    * For now we turn it on for Responses API for select kinds of request.
@@ -635,6 +646,7 @@ async function _aixChatGenerateContent_LL(
 
   const aixConnectionOptions: AixAPI_ConnectionOptions_ChatGenerate = {
     ...inspectorEnabled && { debugDispatchRequest: true, debugProfilePerformance: true },
+    ...debugRequestBodyOverride && { debugRequestBodyOverride },
     // FIXME: disabled until clearly working
     // ...requestResumability && { enableResumability: true },
   } as const;

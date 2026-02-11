@@ -51,6 +51,20 @@ function selectRetryProfile(error: TRPCFetcherError | unknown): RetryProfile | n
           console.log(`[fetchers.retrier] Detected request-too-large error - will not retry`);
         return null;
       }
+      // Don't retry messages starting with 'Insufficient balance ...'
+      const isInsufficientBalance = /^insufficient balance/i.test(error.message);
+      if (isInsufficientBalance) {
+        if (AIX_DEBUG_SERVER_RETRY)
+          console.log(`[fetchers.retrier] Detected insufficient balance error - will not retry`);
+        return null;
+      }
+      // Don't retry zero-limit errors - org doesn't have access to this model (e.g. Anthropic fast mode research preview)
+      const isZeroLimit = /rate limit of 0 input tokens per minute/.test(error.message);
+      if (isZeroLimit) {
+        if (AIX_DEBUG_SERVER_RETRY)
+          console.log(`[fetchers.retrier] Detected zero rate limit (no model access) - will not retry`);
+        return null;
+      }
       return RETRY_PROFILES.server; // Retry temporary rate limits
     }
 

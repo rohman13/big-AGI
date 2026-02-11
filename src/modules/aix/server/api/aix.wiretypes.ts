@@ -451,9 +451,10 @@ export namespace AixWire_API {
 
     // Anthropic
     vndAnt1MContext: z.boolean().optional(),
-    vndAntEffort: z.enum(['low', 'medium', 'high']).optional(),
+    vndAntEffort: z.enum(['low', 'medium', 'high', 'max']).optional(),
+    vndAntInfSpeed: z.enum(['fast']).optional(),
     vndAntSkills: z.string().optional(),
-    vndAntThinkingBudget: z.number().nullable().optional(),
+    vndAntThinkingBudget: z.number().or(z.literal('adaptive')).nullable().optional(),
     vndAntToolSearch: z.enum(['regex', 'bm25']).optional(), // Tool Search Tool variant
     vndAntWebFetch: z.enum(['auto']).optional(),
     vndAntWebSearch: z.enum(['auto']).optional(),
@@ -497,8 +498,8 @@ export namespace AixWire_API {
      */
     userGeolocation: z.object({
       city: z.string().optional(),      // free text input for the city of the user, e.g. San Francisco.
-      country: z.string().optional(),   // two-letter ISO country code of the user, e.g. US
       region: z.string().optional(),    // free text input for the reg. of the user the user, e.g. California
+      country: z.string().optional(),   // two-letter ISO country code of the user, e.g. US
       timezone: z.string().optional(),  // IANA timezone of the user, e.g. America/Los_Angeles
     }).optional(),
   });
@@ -565,6 +566,11 @@ export namespace AixWire_API {
      * Request profiling data for a streaming call: time spent preparing, connecting, waiting, receiving, etc. Fulfillment is decided by the server, and won't be available on 'production' builds.
      */
     debugProfilePerformance: z.boolean().optional(),
+
+    /**
+     * Applies a JSON override to the dispatch request body.
+     */
+    debugRequestBodyOverride: z.record(z.string(), z.unknown()).optional(),
 
     /**
      * Request a resumable connection, if the model/service supports it.

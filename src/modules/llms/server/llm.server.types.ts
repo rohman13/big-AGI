@@ -19,10 +19,8 @@ export type ModelDescriptionSchema = z.infer<typeof ModelDescription_schema>;
 /// Benchmark
 
 const BenchmarksScores_schema = z.object({
-  cbaElo: z.number().optional(),
-  cbaMmlu: z.number().optional(),
-  // heCode: z.number().optional(), // HumanEval, code, 0-shot
-  // vqaMmmu: z.number().optional(), // Visual Question Answering, MMMU, 0-shot
+  cbaElo: z.number().optional(), // Chat Bot Arena ELO score
+  // removed others for now to reduce noise - also maybe we shall have a mapping table instead
 });
 
 
@@ -81,6 +79,8 @@ const ModelParameterSpec_schema = z.object({
     // Anthropic
     'llmVndAnt1MContext',
     'llmVndAntEffort',
+    'llmVndAntEffortMax',
+    'llmVndAntInfSpeed',
     'llmVndAntSkills',
     'llmVndAntThinkingBudget',
     'llmVndAntWebFetch',
@@ -98,6 +98,7 @@ const ModelParameterSpec_schema = z.object({
     'llmVndGeminiThinkingLevel4',
     // 'llmVndGeminiUrlContext',
     // Moonshot
+    'llmVndMoonReasoningEffort',
     'llmVndMoonshotWebSearch',
     // OpenAI
     'llmVndOaiReasoningEffort',
@@ -139,14 +140,24 @@ export const ModelDescription_schema = z.object({
   contextWindow: z.int().nullable(),
   interfaces: z.array(z.union([z.enum(LLMS_ALL_INTERFACES), z.string()])), // backward compatibility: to not Break client-side interface parsing on newer server
   parameterSpecs: z.array(ModelParameterSpec_schema).optional(),
-  maxCompletionTokens: z.int().optional(),
+  maxCompletionTokens: z.int().optional(), // initial parameter value for 'llmResponseTokens'
   // rateLimits: rateLimitsSchema.optional(),
-  trainingDataCutoff: z.string().optional(),
   benchmark: BenchmarksScores_schema.optional(),
   chatPrice: PricingChatGenerate_schema.optional(),
   hidden: z.boolean().optional(),
-  // TODO: add inputTypes/Kinds..
+  // parameter initializers for vendor-specific defaults
+  initialTemperature: z.number().nullish(), // vendor-specific initial 'llmTemperature' (e.g. Gemini has 1.0)
 });
+
+
+/// Vendor Lookup for OpenRouter parameter inheritance
+// Each vendor's lookup filters to only what works through OpenRouter's OAI-compatible API.
+// OpenRouter merges these with its own auto-detected interfaces and params.
+export type OrtVendorLookupResult = {
+  interfaces?: ModelDescriptionSchema['interfaces'];
+  parameterSpecs?: ModelDescriptionSchema['parameterSpecs'];
+  initialTemperature?: number; // vendor-specific default (e.g. Gemini 1.0); undefined = use global fallback (0.5)
+};
 
 
 /// ListModels Response
