@@ -63,7 +63,6 @@ export function createChatGenerateDispatch(access: AixAPI_Access, model: AixAPI_
         modelIdForBetaFeatures: model.id,
         vndAntWebFetch: model.vndAntWebFetch === 'auto',
         vndAnt1MContext: model.vndAnt1MContext === true,
-        vndAntEffort: !!model.vndAntEffort,
         enableSkills: !!model.vndAntSkills,
         enableFastMode: model.vndAntInfSpeed === 'fast',
         enableStrictOutputs: !!model.strictJsonOutput || !!model.strictToolInvocations, // [Anthropic, 2025-11-13] for both JSON output and grammar-constrained tool invocations inputs
@@ -94,7 +93,7 @@ export function createChatGenerateDispatch(access: AixAPI_Access, model: AixAPI_
       /**
        * [Gemini, 2025-04-17] For newer thinking parameters, use v1alpha (we only see statistically better results)
        */
-      const useV1Alpha = !!model.vndGeminiShowThoughts || model.vndGeminiThinkingBudget !== undefined;
+      const useV1Alpha = false; // !!model.vndGeminiShowThoughts || model.vndGeminiThinkingBudget !== undefined;
       return {
         request: {
           ...geminiAccess(access, model.id, streaming ? GeminiWire_API_Generate_Content.streamingPostPath : GeminiWire_API_Generate_Content.postPath, useV1Alpha),
@@ -144,6 +143,7 @@ export function createChatGenerateDispatch(access: AixAPI_Access, model: AixAPI_
     case 'perplexity':
     case 'togetherai':
     case 'xai':
+    case 'zai':
 
       // newer: OpenAI Responses API, for models that support it and all XAI models
       const isResponsesAPI = !!model.vndOaiResponsesAPI;
@@ -235,6 +235,7 @@ export function createChatGenerateResumeDispatch(access: AixAPI_Access, resumeHa
     case 'perplexity':
     case 'togetherai':
     case 'xai':
+    case 'zai':
       // Throw on unsupported protocols (Azure and OpenRouter are speculatively supported)
       throw new Error(`Resume not supported for dialect: ${dialect}`);
 
