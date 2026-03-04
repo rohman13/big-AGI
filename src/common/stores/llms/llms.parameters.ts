@@ -234,6 +234,14 @@ export const DModelParameterRegistry = {
     // undefined means off (same as 'off')
   }),
 
+  llmVndAntWebFetchMaxUses: {
+    label: 'Web Fetch Max Uses',
+    type: 'integer',
+    description: 'Maximum number of web page fetches per response',
+    range: [1, 50],
+    // undefined means default
+  },
+
   llmVndAntWebSearch: _enumDef({ // implies: LLM_IF_Tools_WebSearch
     label: 'Web Search',
     type: 'enum',
@@ -242,6 +250,14 @@ export const DModelParameterRegistry = {
     // undefined means off (same as 'off')
   }),
 
+  llmVndAntWebSearchMaxUses: {
+    label: 'Web Search Max Uses',
+    type: 'integer',
+    description: 'Maximum number of web searches per response',
+    range: [1, 50],
+    // undefined means default
+  },
+
   // llmVndAntToolSearch: { // Not user set
   //   label: 'Tool Search',
   //   type: 'enum',
@@ -249,6 +265,17 @@ export const DModelParameterRegistry = {
   //   values: ['regex', 'bm25'],
   //   // undefined means off (tool search disabled)
   // },
+
+
+  // Bedrock-specific
+
+  llmVndBedrockAPI: _enumDef({
+    label: 'Bedrock API',
+    type: 'enum',
+    description: 'Bedrock invocation API for this model',
+    values: ['converse', 'invoke-anthropic', 'mantle'],
+    // undefined is not accepted when this parameter is used
+  }),
 
 
   // Gemini-specific
@@ -549,7 +576,7 @@ export function applyModelParameterSpecsInitialValues(destValues: DModelParamete
       if ('writeFactoryValue' in registryDef && registryDef.writeFactoryValue !== undefined)
         destValues[paramId] = registryDef.writeFactoryValue as DModelParameterValue<typeof paramId>;
     } else
-      console.warn(`applyModelParameterInitialValues: unknown parameter id '${paramId}'`);
+      console.warn(`applyModelParameterSpecsInitialValues: unknown parameter id '${paramId}'`);
   }
 }
 
