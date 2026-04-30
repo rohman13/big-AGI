@@ -5,6 +5,7 @@ import type { ChatGenerateParseFunction } from '../chatGenerate.dispatch';
 import type { IParticleTransmitter } from './IParticleTransmitter';
 
 import { GeminiInteractionsWire_API_Interactions } from '../../wiretypes/gemini.interactions.wiretypes';
+import { IssueSymbols } from '../ChatGenerateTransmitter';
 import { geminiConvertPCM2WAV } from './gemini.audioutils';
 
 
@@ -44,7 +45,7 @@ type BlockState = {
  * the cursor (or from start if omitted). Our parser is position-idempotent within a single run
  * because the transmitter's state carries across events.
  */
-export function createGeminiInteractionsParser(requestedModelName: string | null): ChatGenerateParseFunction {
+export function createGeminiInteractionsParserSSE(requestedModelName: string | null): ChatGenerateParseFunction {
 
   const parserCreationTimestamp = Date.now();
   let timeToFirstContent: number | undefined;
@@ -218,11 +219,16 @@ export function createGeminiInteractionsParser(requestedModelName: string | null
       }
 
       case 'error':
-        // Observed mid-stream with an empty payload between content blocks - non-fatal, the stream
-        // continues with further events and eventually an interaction.complete. Silent-skip empty
-        // payloads (Beta noise); warn only when actual error info is present.
-        if (event.error?.message || event.error?.code)
-          console.warn('[GeminiInteractions] SSE error event:', event.error);
+        // Two observed shapes:
+        //  1) Empty payload mid-stream (Beta noise): the stream continues with further events and
+        //     eventually an interaction.complete - silent-skip.
+        //  2) Populated payload with message/code: terminal upstream error (also how Gemini reports
+        //     cancelled interactions: HTTP 500 to the cancel call + an error SSE on the stream).
+        //     Surface as a dialect-terminating issue so the UI renders it and the stream ends cleanly.
+        if (event.error?.message || event.error?.code) {
+          const errorText = `${event.error.code ? `${event.error.code}: ` : ''}${event.error.message || 'Upstream error.'}`;
+          pt.setDialectTerminatingIssue(errorText, IssueSymbols.Generic, 'srv-warn');
+        }
         break;
 
       default: {

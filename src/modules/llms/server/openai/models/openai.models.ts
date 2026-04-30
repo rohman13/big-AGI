@@ -12,6 +12,23 @@ import { fromManualMapping, KnownModel, llmDevCheckModels_DEV, ManualMappings } 
 // OpenAI Model Variants
 export const hardcodedOpenAIVariants: ModelVariantMap = {
 
+  // GPT-5.5 with reasoning disabled (non-thinking) - supports temperature control
+  'gpt-5.5-2026-04-23': {
+    idVariant: '::thinking-none',
+    label: 'GPT-5.5 (No-thinking)',
+    hidden: true, // hidden by default as redundant, user can unhide in settings
+    description: 'Supports temperature control for creative applications. GPT-5.5 with reasoning disabled (reasoning_effort=none).',
+    interfaces: [LLM_IF_OAI_Responses, LLM_IF_OAI_Chat, LLM_IF_OAI_Vision, LLM_IF_OAI_Fn, LLM_IF_OAI_PromptCaching], // NO LLM_IF_OAI_Reasoning, NO LLM_IF_HOTFIX_NoTemperature
+    parameterSpecs: [
+      { paramId: 'llmVndOaiEffort', enumValues: ['none', 'low', 'medium', 'high', 'xhigh'], initialValue: 'none', hidden: true }, // factory 'none', not changeable
+      { paramId: 'llmVndOaiWebSearchContext' },
+      { paramId: 'llmVndOaiVerbosity' },
+      { paramId: 'llmVndOaiImageGeneration' },
+      { paramId: 'llmVndOaiCodeInterpreter' },
+      { paramId: 'llmForceNoStream' },
+    ],
+  },
+
   // GPT-5.4 with reasoning disabled (non-thinking) - supports temperature control
   'gpt-5.4-2026-03-05': {
     idVariant: '::thinking-none',
@@ -87,6 +104,58 @@ const PS_DEEP_RESEARCH = [{ paramId: 'llmVndOaiWebSearchContext' as const, initi
 // https://platform.openai.com/docs/models
 // https://platform.openai.com/docs/pricing
 export const _knownOpenAIChatModels: ManualMappings = [
+
+  /// GPT-5.5 series - Released April 23, 2026
+
+  // GPT-5.5
+  {
+    idPrefix: 'gpt-5.5-2026-04-23',
+    label: 'GPT-5.5 (2026-04-23)',
+    description: 'New baseline for complex production workflows. Stronger task execution, more precise tool use, more efficient reasoning with fewer tokens. 1M token context.',
+    contextWindow: 1050000,
+    maxCompletionTokens: 128000,
+    interfaces: [LLM_IF_OAI_Responses, ...IFS_CHAT_CACHE_REASON, LLM_IF_HOTFIX_NoTemperature],
+    parameterSpecs: [
+      { paramId: 'llmVndOaiEffort', enumValues: ['none', 'low', 'medium', 'high', 'xhigh'], initialValue: 'medium' }, // medium is the new default for 5.5
+      { paramId: 'llmVndOaiWebSearchContext' },
+      { paramId: 'llmVndOaiVerbosity' },
+      { paramId: 'llmVndOaiImageGeneration' },
+      { paramId: 'llmVndOaiCodeInterpreter' },
+      { paramId: 'llmForceNoStream' },
+    ],
+    chatPrice: { input: 5, cache: { cType: 'oai-ac', read: 0.5 }, output: 30 },
+    // benchmark: TBD - no CBA ELO yet
+  },
+  {
+    idPrefix: 'gpt-5.5',
+    label: 'GPT-5.5',
+    symLink: 'gpt-5.5-2026-04-23',
+  },
+
+  // GPT-5.5 Pro
+  {
+    idPrefix: 'gpt-5.5-pro-2026-04-23',
+    label: 'GPT-5.5 Pro (2026-04-23)',
+    description: 'Most capable model for complex tasks. Uses more compute for smarter, more precise responses on the hardest problems.',
+    contextWindow: 1050000,
+    maxCompletionTokens: 272000,
+    interfaces: [LLM_IF_OAI_Responses, ...IFS_CHAT_MIN, LLM_IF_OAI_Reasoning, LLM_IF_HOTFIX_NoTemperature],
+    parameterSpecs: [
+      { paramId: 'llmVndOaiEffort', enumValues: ['medium', 'high', 'xhigh'] }, // Pro: no low/none
+      { paramId: 'llmVndOaiWebSearchContext' },
+      { paramId: 'llmVndOaiVerbosity' },
+      { paramId: 'llmVndOaiImageGeneration' },
+      { paramId: 'llmForceNoStream' },
+    ],
+    chatPrice: { input: 30, output: 180 },
+    // benchmark: TBD
+  },
+  {
+    idPrefix: 'gpt-5.5-pro',
+    label: 'GPT-5.5 Pro',
+    symLink: 'gpt-5.5-pro-2026-04-23',
+  },
+
 
   /// GPT-5.4 series - Released March 5, 2026
 
@@ -250,6 +319,7 @@ export const _knownOpenAIChatModels: ManualMappings = [
 
   // GPT-5.2
   {
+    hidden: true, // superseded by GPT-5.4/5.5
     idPrefix: 'gpt-5.2-2025-12-11',
     label: 'GPT-5.2 (2025-12-11)',
     description: 'Most capable model for professional work and long-running agents. Improvements in general intelligence, long-context, agentic tool-calling, and vision.',
@@ -268,6 +338,7 @@ export const _knownOpenAIChatModels: ManualMappings = [
     benchmark: { cbaElo: 1441 }, // gpt-5.2-high
   },
   {
+    hidden: true, // superseded by GPT-5.4/5.5
     idPrefix: 'gpt-5.2',
     label: 'GPT-5.2',
     symLink: 'gpt-5.2-2025-12-11',
@@ -275,6 +346,7 @@ export const _knownOpenAIChatModels: ManualMappings = [
 
   // GPT-5.2 Codex
   {
+    hidden: true, // superseded by GPT-5.3 Codex
     idPrefix: 'gpt-5.2-codex',
     label: 'GPT-5.2 Codex',
     description: 'GPT-5.2 optimized for long-horizon, agentic coding tasks in Codex or similar environments. Supports low, medium, high, and xhigh reasoning effort settings.',
@@ -293,6 +365,7 @@ export const _knownOpenAIChatModels: ManualMappings = [
 
   // GPT-5.2 Chat Latest
   {
+    hidden: true, // superseded by GPT-5.3 Instant
     idPrefix: 'gpt-5.2-chat-latest',
     label: 'GPT-5.2 Instant',
     description: 'GPT-5.2 model powering ChatGPT. Fast, capable for everyday work with clear improvements in info-seeking, how-tos, technical writing.',
@@ -311,6 +384,7 @@ export const _knownOpenAIChatModels: ManualMappings = [
 
   // GPT-5.2 Pro
   {
+    hidden: true, // superseded by GPT-5.4/5.5 Pro
     idPrefix: 'gpt-5.2-pro-2025-12-11',
     label: 'GPT-5.2 Pro (2025-12-11)',
     description: 'Smartest and most trustworthy option for difficult questions. Uses more compute for harder thinking on complex domains like programming.',
@@ -328,6 +402,7 @@ export const _knownOpenAIChatModels: ManualMappings = [
     // benchmark: TBD
   },
   {
+    hidden: true, // superseded by GPT-5.4/5.5 Pro
     idPrefix: 'gpt-5.2-pro',
     label: 'GPT-5.2 Pro',
     symLink: 'gpt-5.2-pro-2025-12-11',
@@ -338,6 +413,7 @@ export const _knownOpenAIChatModels: ManualMappings = [
 
   // GPT-5.1
   {
+    hidden: true, // superseded by GPT-5.4/5.5
     idPrefix: 'gpt-5.1-2025-11-13',
     label: 'GPT-5.1 (2025-11-13)',
     description: 'The best model for coding and agentic tasks with configurable reasoning effort.',
@@ -355,6 +431,7 @@ export const _knownOpenAIChatModels: ManualMappings = [
     benchmark: { cbaElo: 1455 }, // gpt-5.1-high
   },
   {
+    hidden: true, // superseded by GPT-5.4/5.5
     idPrefix: 'gpt-5.1',
     label: 'GPT-5.1',
     symLink: 'gpt-5.1-2025-11-13',
@@ -362,6 +439,7 @@ export const _knownOpenAIChatModels: ManualMappings = [
 
   // GPT-5.1 Chat Latest
   {
+    hidden: true, // superseded by GPT-5.3 Instant
     idPrefix: 'gpt-5.1-chat-latest',
     label: 'GPT-5.1 Instant',
     description: 'GPT-5.1 Instant with adaptive reasoning. More conversational with improved instruction following.',
@@ -381,6 +459,7 @@ export const _knownOpenAIChatModels: ManualMappings = [
 
   // GPT-5.1 Codex Max
   {
+    hidden: true, // superseded by GPT-5.3 Codex
     idPrefix: 'gpt-5.1-codex-max',
     label: 'GPT-5.1 Codex Max',
     description: 'Our most intelligent coding model optimized for long-horizon, agentic coding tasks.',
@@ -398,6 +477,7 @@ export const _knownOpenAIChatModels: ManualMappings = [
   },
   // GPT-5.1 Codex
   {
+    hidden: true, // superseded by GPT-5.3 Codex
     idPrefix: 'gpt-5.1-codex',
     label: 'GPT-5.1 Codex',
     description: 'A version of GPT-5.1 optimized for agentic coding tasks in Codex or similar environments.',
@@ -415,6 +495,7 @@ export const _knownOpenAIChatModels: ManualMappings = [
   },
   // GPT-5.1 Codex Mini
   {
+    hidden: true, // superseded by GPT-5.3 Codex
     idPrefix: 'gpt-5.1-codex-mini',
     label: 'GPT-5.1 Codex Mini',
     description: 'Smaller, faster version of GPT-5.1 Codex for efficient coding tasks.',
@@ -436,6 +517,7 @@ export const _knownOpenAIChatModels: ManualMappings = [
 
   // GPT-5
   {
+    hidden: true, // superseded by GPT-5.4/5.5
     idPrefix: 'gpt-5-2025-08-07',
     label: 'GPT-5 (2025-08-07)',
     description: 'The best model for coding and agentic tasks across domains.',
@@ -453,6 +535,7 @@ export const _knownOpenAIChatModels: ManualMappings = [
     benchmark: { cbaElo: 1433 }, // gpt-5-high
   },
   {
+    hidden: true, // superseded by GPT-5.4/5.5
     idPrefix: 'gpt-5',
     label: 'GPT-5',
     symLink: 'gpt-5-2025-08-07',
@@ -460,6 +543,7 @@ export const _knownOpenAIChatModels: ManualMappings = [
 
   // GPT-5 Pro
   {
+    hidden: true, // superseded by GPT-5.4/5.5 Pro
     idPrefix: 'gpt-5-pro-2025-10-06',
     label: 'GPT-5 Pro (2025-10-06)',
     description: 'Version of GPT-5 that uses more compute to produce smarter and more precise responses. Designed for tough problems.',
@@ -471,6 +555,7 @@ export const _knownOpenAIChatModels: ManualMappings = [
     // benchmark: has not been measured yet
   },
   {
+    hidden: true, // superseded by GPT-5.4/5.5 Pro
     idPrefix: 'gpt-5-pro',
     label: 'GPT-5 Pro',
     symLink: 'gpt-5-pro-2025-10-06',
@@ -511,6 +596,7 @@ export const _knownOpenAIChatModels: ManualMappings = [
 
   // GPT-5 Search API
   {
+    hidden: true, // poor quality - use llmVndOaiWebSearchContext on regular models instead
     idPrefix: 'gpt-5-search-api-2025-10-14',
     label: 'GPT-5 Search API (2025-10-14)',
     description: 'Updated web search model in Chat Completions API. 60% cheaper with domain filtering support.',
@@ -522,6 +608,7 @@ export const _knownOpenAIChatModels: ManualMappings = [
     // benchmark: TBD
   },
   {
+    hidden: true, // poor quality - use llmVndOaiWebSearchContext on regular models instead
     idPrefix: 'gpt-5-search-api',
     label: 'GPT-5 Search API',
     symLink: 'gpt-5-search-api-2025-10-14',
@@ -529,6 +616,7 @@ export const _knownOpenAIChatModels: ManualMappings = [
 
   // GPT-5 mini
   {
+    hidden: true, // superseded by GPT-5.4 Mini
     idPrefix: 'gpt-5-mini-2025-08-07',
     label: 'GPT-5 Mini (2025-08-07)',
     description: 'A faster, more cost-efficient version of GPT-5 for well-defined tasks.',
@@ -540,6 +628,7 @@ export const _knownOpenAIChatModels: ManualMappings = [
     benchmark: { cbaElo: 1390 }, // gpt-5-mini-high
   },
   {
+    hidden: true, // superseded by GPT-5.4 Mini
     idPrefix: 'gpt-5-mini',
     label: 'GPT-5 Mini',
     symLink: 'gpt-5-mini-2025-08-07',
@@ -547,6 +636,7 @@ export const _knownOpenAIChatModels: ManualMappings = [
 
   // GPT-5 nano
   {
+    hidden: true, // superseded by GPT-5.4 Nano
     idPrefix: 'gpt-5-nano-2025-08-07',
     label: 'GPT-5 Nano (2025-08-07)',
     description: 'Fastest, most cost-efficient version of GPT-5 for summarization and classification tasks.',
@@ -558,6 +648,7 @@ export const _knownOpenAIChatModels: ManualMappings = [
     benchmark: { cbaElo: 1337 }, // gpt-5-nano-high
   },
   {
+    hidden: true, // superseded by GPT-5.4 Nano
     idPrefix: 'gpt-5-nano',
     label: 'GPT-5 Nano',
     symLink: 'gpt-5-nano-2025-08-07',
@@ -608,8 +699,9 @@ export const _knownOpenAIChatModels: ManualMappings = [
   // o4-mini-deep-research - (v1/responses API)
   {
     idPrefix: 'o4-mini-deep-research-2025-06-26',
-    label: 'o4 Mini Deep Research (2025-06-26)',
-    description: 'Faster, more affordable deep research model for complex, multi-step research tasks.',
+    label: 'o4 Mini Deep Research [Deprecated]',
+    isLegacy: true,
+    description: 'Faster, more affordable deep research model for complex, multi-step research tasks. [Shutdown: 2026-07-23 - migrate to GPT-5.5 with web search.]',
     contextWindow: 200000,
     maxCompletionTokens: 100000,
     interfaces: [LLM_IF_OAI_Responses, ...IFS_CHAT_CACHE_REASON, LLM_IF_HOTFIX_NoTemperature],
@@ -625,8 +717,9 @@ export const _knownOpenAIChatModels: ManualMappings = [
   /// o4-mini
   {
     idPrefix: 'o4-mini-2025-04-16',
-    label: 'o4 Mini (2025-04-16)',
-    description: 'Latest o4-mini model. Optimized for fast, effective reasoning with exceptionally efficient performance in coding and visual tasks.',
+    label: 'o4 Mini [Deprecated]',
+    isLegacy: true,
+    description: 'Latest o4-mini model. Optimized for fast, effective reasoning with exceptionally efficient performance in coding and visual tasks. [Shutdown: 2026-10-23 - migrate to GPT-5.4 Mini.]',
     contextWindow: 200000,
     maxCompletionTokens: 100000,
     interfaces: IFS_CHAT_CACHE_REASON,
@@ -643,8 +736,9 @@ export const _knownOpenAIChatModels: ManualMappings = [
   // o3-deep-research - (v1/responses API)
   {
     idPrefix: 'o3-deep-research-2025-06-26',
-    label: 'o3 Deep Research (2025-06-26)',
-    description: 'Our most powerful deep research model for complex, multi-step research tasks.',
+    label: 'o3 Deep Research [Deprecated]',
+    isLegacy: true,
+    description: 'Our most powerful deep research model for complex, multi-step research tasks. [Shutdown: 2026-07-23 - migrate to GPT-5.5 Pro with web search.]',
     contextWindow: 200000,
     maxCompletionTokens: 100000,
     interfaces: [LLM_IF_OAI_Responses, ...IFS_CHAT_CACHE_REASON, LLM_IF_HOTFIX_NoTemperature],
@@ -696,8 +790,9 @@ export const _knownOpenAIChatModels: ManualMappings = [
   // o3-mini
   {
     idPrefix: 'o3-mini-2025-01-31',
-    label: 'o3 Mini (2025-01-31)',
-    description: 'Latest o3-mini model snapshot. High intelligence at the same cost and latency targets of o1-mini. Excels at science, math, and coding tasks.',
+    label: 'o3 Mini [Deprecated]',
+    isLegacy: true,
+    description: 'Latest o3-mini model snapshot. High intelligence at the same cost and latency targets of o1-mini. Excels at science, math, and coding tasks. [Shutdown: 2026-10-23 - migrate to GPT-5.4 Mini.]',
     contextWindow: 200000,
     maxCompletionTokens: 100000,
     interfaces: [LLM_IF_OAI_Chat, LLM_IF_OAI_Fn, LLM_IF_OAI_PromptCaching, LLM_IF_OAI_Reasoning, LLM_IF_HOTFIX_StripImages],
@@ -733,8 +828,9 @@ export const _knownOpenAIChatModels: ManualMappings = [
   // o1
   {
     idPrefix: 'o1-2024-12-17',
-    label: 'o1 (2024-12-17)',
-    description: 'Previous full o-series reasoning model.',
+    label: 'o1 [Deprecated]',
+    isLegacy: true,
+    description: 'Previous full o-series reasoning model. [Shutdown: 2026-10-23 - migrate to GPT-5.5 or o3.]',
     contextWindow: 200000,
     maxCompletionTokens: 100000,
     interfaces: IFS_CHAT_CACHE_REASON,
@@ -788,8 +884,9 @@ export const _knownOpenAIChatModels: ManualMappings = [
   // GPT-4.1 nano
   {
     idPrefix: 'gpt-4.1-nano-2025-04-14',
-    label: 'GPT-4.1 Nano (2025-04-14)',
-    description: 'Fastest, most cost-effective GPT 4.1 model. Delivers exceptional performance with low latency, ideal for tasks like classification or autocompletion.',
+    label: 'GPT-4.1 Nano [Deprecated]',
+    isLegacy: true,
+    description: 'Fastest, most cost-effective GPT 4.1 model. Delivers exceptional performance with low latency, ideal for tasks like classification or autocompletion. [Shutdown: 2026-10-23 - migrate to GPT-5.4 Nano.]',
     contextWindow: 1047576,
     maxCompletionTokens: 32768,
     interfaces: IFS_CHAT_CACHE,
@@ -819,6 +916,7 @@ export const _knownOpenAIChatModels: ManualMappings = [
 
   // gpt-audio
   {
+    hidden: true, // superseded by GPT Audio 1.5
     idPrefix: 'gpt-audio-2025-08-28',
     label: 'GPT Audio (2025-08-28)',
     description: 'First generally available audio model. Accepts audio inputs and outputs, and can be used in the Chat Completions REST API.',
@@ -829,6 +927,7 @@ export const _knownOpenAIChatModels: ManualMappings = [
     // benchmark: TBD
   },
   {
+    hidden: true, // superseded by GPT Audio 1.5
     idPrefix: 'gpt-audio',
     label: 'GPT Audio',
     symLink: 'gpt-audio-2025-08-28',
@@ -1220,6 +1319,12 @@ export function openAIInjectVariants(acc: ModelDescriptionSchema[], model: Model
 
 
 const _manualOrderingIdPrefixes = [
+  // GPT-5.5
+  'gpt-5.5-20',
+  'gpt-5.5-pro-20',
+  'gpt-5.5-pro',
+  'gpt-5.5-chat-latest',
+  'gpt-5.5',
   // GPT-5.4
   'gpt-5.4-20',
   'gpt-5.4-pro-20',
@@ -1419,6 +1524,7 @@ export function llmOrtOaiLookup(orModelName: string): OrtVendorLookupResult | un
   // typemap to known models
   const ortOaiRefMap: Record<string, string | null> = {
     // renames
+    'gpt-5.5-chat': 'gpt-5.5-2026-04-23', // no chat-latest yet, map to snapshot
     'gpt-5.4-chat': 'gpt-5.4-2026-03-05', // no chat-latest yet, map to snapshot
     'gpt-5.3-chat': 'gpt-5.3-chat-latest',
     'gpt-5.2-chat': 'gpt-5.2-chat-latest',
