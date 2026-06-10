@@ -61,7 +61,7 @@ import { zaiCuratedModelDescriptions, zaiDiscoverModels, zaiModelSort } from './
 
 export type ListModelsDispatch<TWireModels = any> = {
   fetchModels: () => Promise<TWireModels>;
-  convertToDescriptions: (wireModels: TWireModels) => ModelDescriptionSchema[];
+  convertToDescriptions: (wireModels: TWireModels) => ReadonlyArray<ModelDescriptionSchema>;
 };
 
 /**
@@ -130,7 +130,7 @@ function _listModelsCreateDispatch(access: AixAPI_Access, signal?: AbortSignal):
             const m = id.match(/-(\d)(?:-(\d)(?!\d))?/);
             return m ? +m[1] + (m[2] ? +m[2] / 10 : 0) : 0;
           };
-          const classPrecedence = ['-opus-', '-sonnet-', '-haiku-'];
+          const classPrecedence = ['-fable-', '-mythos-', '-opus-', '-sonnet-', '-haiku-'];
           const getClassIdx = (id: string) => classPrecedence.findIndex(c => id.includes(c));
 
           return availableModels

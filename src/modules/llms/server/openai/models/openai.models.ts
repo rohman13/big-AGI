@@ -6,7 +6,10 @@ import { Release } from '~/common/app.release';
 
 import type { ModelDescriptionSchema, OrtVendorLookupResult } from '../../llm.server.types';
 import { createVariantInjector, ModelVariantMap } from '../../llm.server.variants';
-import { fromManualMapping, KnownModel, llmDevCheckModels_DEV, ManualMappings } from '../../models.mappings';
+import { llmsDefineManualMappings, fromManualMapping, KnownModel, llmDevCheckModels_DEV } from '../../models.mappings';
+
+// --- OpenAI Model ID inference (auto-derived from _knownOpenAIChatModels) ---
+export type LlmsOpenAIModelId = typeof _knownOpenAIChatModels[number]['idPrefix'];
 
 
 // OpenAI Model Variants
@@ -103,7 +106,7 @@ const PS_DEEP_RESEARCH = [{ paramId: 'llmVndOaiWebSearchContext' as const, initi
 // [OpenAI] Known Chat Models
 // https://platform.openai.com/docs/models
 // https://platform.openai.com/docs/pricing
-export const _knownOpenAIChatModels: ManualMappings = [
+export const _knownOpenAIChatModels = llmsDefineManualMappings([
 
   /// GPT-5.5 series - Released April 23, 2026
 
@@ -140,7 +143,7 @@ export const _knownOpenAIChatModels: ManualMappings = [
     pubDate: '20260423',
     description: 'Most capable model for complex tasks. Uses more compute for smarter, more precise responses on the hardest problems.',
     contextWindow: 1050000,
-    maxCompletionTokens: 272000,
+    maxCompletionTokens: 128000, // official docs: 128K max output (272K is the long-context pricing threshold, not output limit)
     interfaces: [LLM_IF_OAI_Responses, ...IFS_CHAT_MIN, LLM_IF_OAI_Reasoning, LLM_IF_HOTFIX_NoTemperature],
     parameterSpecs: [
       { paramId: 'llmVndOaiEffort', enumValues: ['medium', 'high', 'xhigh'] }, // Pro: no low/none
@@ -194,7 +197,7 @@ export const _knownOpenAIChatModels: ManualMappings = [
     pubDate: '20260305',
     description: 'Most capable model for complex tasks. Uses more compute for smarter, more precise responses on difficult problems.',
     contextWindow: 1050000,
-    maxCompletionTokens: 272000,
+    maxCompletionTokens: 128000, // official docs: 128K max output (272K is the long-context pricing threshold, not output limit)
     interfaces: [LLM_IF_OAI_Responses, ...IFS_CHAT_MIN, LLM_IF_OAI_Reasoning, LLM_IF_HOTFIX_NoTemperature],
     parameterSpecs: [
       { paramId: 'llmVndOaiEffort', enumValues: ['medium', 'high', 'xhigh'] },
@@ -291,12 +294,12 @@ export const _knownOpenAIChatModels: ManualMappings = [
 
   // GPT-5.3 Chat Latest - Released March 3, 2026
   {
-    hidden: true, // deprecated, shutdown 2026-08-10
+    hidden: true, // deprecated May 8, 2026, shutdown 2026-08-10
     idPrefix: 'gpt-5.3-chat-latest',
     label: 'GPT-5.3 Instant [Deprecated]',
     pubDate: '20260303',
     isLegacy: true,
-    description: '[Use: GPT-5.5 - Shut down: 2026-08-10] GPT-5.3 model powering ChatGPT. Points to the GPT-5.3 Instant snapshot currently used in ChatGPT.',
+    description: '[Use: GPT-5.5 - Shut down: 2026-08-10] GPT-5.3 Instant model, previously powering ChatGPT. Replaced by GPT-5.5 Instant.',
     contextWindow: 128000,
     maxCompletionTokens: 16384,
     interfaces: [LLM_IF_OAI_Responses, ...IFS_CHAT_CACHE, LLM_IF_HOTFIX_NoTemperature],
@@ -363,12 +366,12 @@ export const _knownOpenAIChatModels: ManualMappings = [
 
   // GPT-5.2 Chat Latest
   {
-    hidden: true, // superseded by GPT-5.3 Instant
+    hidden: true, // deprecated May 8, 2026, shutdown 2026-08-10
     idPrefix: 'gpt-5.2-chat-latest',
     label: 'GPT-5.2 Instant [Deprecated]',
     pubDate: '20251211',
     isLegacy: true,
-    description: '[Use: GPT-5.5 - Shut down: 2026-08-10] GPT-5.2 model powering ChatGPT. Fast, capable for everyday work with clear improvements in info-seeking, how-tos, technical writing.',
+    description: '[Use: GPT-5.5 - Shut down: 2026-08-10] GPT-5.2 Instant model, previously powering ChatGPT. Replaced by GPT-5.5 Instant.',
     contextWindow: 128000,
     maxCompletionTokens: 16384,
     interfaces: [LLM_IF_OAI_Responses, ...IFS_CHAT_CACHE, LLM_IF_HOTFIX_NoTemperature],
@@ -390,7 +393,7 @@ export const _knownOpenAIChatModels: ManualMappings = [
     pubDate: '20251211',
     description: 'Smartest and most trustworthy option for difficult questions. Uses more compute for harder thinking on complex domains like programming.',
     contextWindow: 400000,
-    maxCompletionTokens: 272000,
+    maxCompletionTokens: 128000, // official docs: 128K max output (272K is input limit within 400K context)
     interfaces: [LLM_IF_OAI_Responses, ...IFS_CHAT_MIN, LLM_IF_OAI_Reasoning, LLM_IF_HOTFIX_NoTemperature],
     parameterSpecs: [
       { paramId: 'llmVndOaiEffort', enumValues: ['medium', 'high', 'xhigh'] },
@@ -560,7 +563,7 @@ export const _knownOpenAIChatModels: ManualMappings = [
     pubDate: '20251006',
     description: 'Version of GPT-5 that uses more compute to produce smarter and more precise responses. Designed for tough problems.',
     contextWindow: 400000,
-    maxCompletionTokens: 272000,
+    maxCompletionTokens: 128000, // official docs: 128K max output (272K is input limit within 400K context)
     interfaces: [LLM_IF_OAI_Responses, ...IFS_CHAT_MIN, LLM_IF_OAI_Reasoning, LLM_IF_HOTFIX_NoTemperature],
     parameterSpecs: [{ paramId: 'llmVndOaiVerbosity' }, { paramId: 'llmVndOaiWebSearchContext' }, { paramId: 'llmVndOaiImageGeneration' }, { paramId: 'llmForceNoStream' }], // reasoning effort is fixed at 'high'
     chatPrice: { input: 15, output: 120 },
@@ -591,7 +594,7 @@ export const _knownOpenAIChatModels: ManualMappings = [
 
   // GPT-5 Codex
   {
-    hidden: true, // deprecated per OpenAI docs (2026-04), superseded by gpt-5.1-codex/gpt-5.3-codex
+    hidden: true, // deprecated Apr 22, 2026, shutdown 2026-07-23
     idPrefix: 'gpt-5-codex',
     label: 'GPT-5 Codex [Deprecated]',
     pubDate: '20250915',
@@ -905,7 +908,7 @@ export const _knownOpenAIChatModels: ManualMappings = [
 
   // GPT-4.1 nano
   {
-    hidden: true, // deprecated, shutdown 2026-10-23
+    hidden: true, // deprecated Apr 22, 2026, shutdown 2026-10-23
     idPrefix: 'gpt-4.1-nano-2025-04-14',
     label: 'GPT-4.1 Nano [Deprecated]',
     pubDate: '20250414',
@@ -1148,10 +1151,11 @@ export const _knownOpenAIChatModels: ManualMappings = [
   // As such, many 3.5 models are in the 'deny list' below, and not even returned to the UI.
   {
     idPrefix: 'gpt-3.5-turbo-0125',
-    label: '3.5-Turbo',
+    label: '3.5-Turbo [Deprecated]',
     pubDate: '20240125',
-    hidden: true, // OLD
-    description: 'The latest GPT-3.5 Turbo model with higher accuracy at responding in requested formats and a fix for a bug which caused a text encoding issue for non-English language function calls.',
+    hidden: true, // deprecated Apr 22, 2026, shutdown 2026-10-23
+    isLegacy: true,
+    description: '[Use: GPT-5.4 Mini - Shut down: 2026-10-23] The latest GPT-3.5 Turbo model with higher accuracy at responding in requested formats.',
     contextWindow: 16385,
     maxCompletionTokens: 4096,
     interfaces: [LLM_IF_OAI_Chat, LLM_IF_OAI_Fn],
@@ -1177,7 +1181,7 @@ export const _knownOpenAIChatModels: ManualMappings = [
     symLink: 'gpt-3.5-turbo-0125',
   },
 
-];
+]);
 
 
 // -- 0-day or unknown models --
@@ -1263,6 +1267,9 @@ const openAIModelsDenyList: string[] = [
   // Video models: /v1/videos
   'sora-2-pro', 'sora-2',
 
+  // Specialized domain models
+  'gpt-5.5-cyber', // cybersecurity-specific, limited preview
+
   // Safety/moderation models
   'gpt-oss-safeguard',
 
@@ -1289,7 +1296,7 @@ const _manualOrderingIdPrefixes = [
   'gpt-5.5-20',
   'gpt-5.5-pro-20',
   'gpt-5.5-pro',
-  'gpt-5.5-chat-latest',
+  'gpt-5.5-chat-latest', // GPT-5.5 Instant
   'gpt-5.5',
   // GPT-5.4
   'gpt-5.4-20',
@@ -1443,7 +1450,7 @@ export function openaiValidateModelDefs_DEV(apiModels: unknown, parsedModels?: o
 
     const apiIds = apiModels.map((model: any) => model.id);
     const knownIds = _knownOpenAIChatModels
-      .filter(model => model.idPrefix && model.idPrefix !== '') // exclude fallback model
+      .filter(model => !!model.idPrefix) // exclude fallback model
       .map(model => model.idPrefix);
 
     // 1 & 2: Check stale and unknown definitions
@@ -1485,7 +1492,7 @@ export function llmOrtOaiLookup(orModelName: string): OrtVendorLookupResult | un
   // typemap to known models
   const ortOaiRefMap: Record<string, string | null> = {
     // renames
-    'gpt-5.5-chat': 'gpt-5.5-2026-04-23', // no chat-latest yet, map to snapshot
+    'gpt-5.5-chat': 'gpt-5.5-2026-04-23', // gpt-5.5-chat-latest not yet in API, map to snapshot
     'gpt-5.4-chat': 'gpt-5.4-2026-03-05', // no chat-latest yet, map to snapshot
     'gpt-5.3-chat': 'gpt-5.3-chat-latest',
     'gpt-5.2-chat': 'gpt-5.2-chat-latest',
