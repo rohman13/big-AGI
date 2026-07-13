@@ -4,6 +4,8 @@ import { ModelVendorAlibaba } from './alibaba/alibaba.vendor';
 import { ModelVendorAnthropic } from './anthropic/anthropic.vendor';
 import { ModelVendorAzure } from './azure/azure.vendor';
 import { ModelVendorBedrock } from './bedrock/bedrock.vendor';
+import { ModelVendorCerebras } from './cerebras/cerebras.vendor';
+import { ModelVendorCohere } from './cohere/cohere.vendor';
 import { ModelVendorDeepseek } from './deepseek/deepseekai.vendor';
 import { ModelVendorGemini } from './gemini/gemini.vendor';
 import { ModelVendorGroq } from './groq/groq.vendor';
@@ -28,6 +30,8 @@ export type ModelVendorId =
   | 'anthropic'
   | 'azure'
   | 'bedrock'
+  | 'cerebras'
+  | 'cohere'
   | 'deepseek'
   | 'googleai'
   | 'groq'
@@ -51,6 +55,8 @@ const MODEL_VENDOR_REGISTRY = {
   anthropic: ModelVendorAnthropic,
   azure: ModelVendorAzure,
   bedrock: ModelVendorBedrock,
+  cerebras: ModelVendorCerebras,
+  cohere: ModelVendorCohere,
   deepseek: ModelVendorDeepseek,
   googleai: ModelVendorGemini,
   groq: ModelVendorGroq,

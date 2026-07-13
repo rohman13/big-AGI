@@ -10,6 +10,8 @@ import { AlibabaServiceSetup } from '../vendors/alibaba/AlibabaServiceSetup';
 import { AnthropicServiceSetup } from '../vendors/anthropic/AnthropicServiceSetup';
 import { AzureServiceSetup } from '../vendors/azure/AzureServiceSetup';
 import { BedrockServiceSetup } from '../vendors/bedrock/BedrockServiceSetup';
+import { CerebrasServiceSetup } from '../vendors/cerebras/CerebrasServiceSetup';
+import { CohereServiceSetup } from '../vendors/cohere/CohereServiceSetup';
 import { DeepseekAIServiceSetup } from '../vendors/deepseek/DeepseekAIServiceSetup';
 import { GeminiServiceSetup } from '../vendors/gemini/GeminiServiceSetup';
 import { GroqServiceSetup } from '../vendors/groq/GroqServiceSetup';
@@ -37,6 +39,8 @@ const vendorSetupComponents: Record<ModelVendorId, React.ComponentType<{ service
   anthropic: AnthropicServiceSetup,
   azure: AzureServiceSetup,
   bedrock: BedrockServiceSetup,
+  cerebras: CerebrasServiceSetup,
+  cohere: CohereServiceSetup,
   deepseek: DeepseekAIServiceSetup,
   googleai: GeminiServiceSetup,
   groq: GroqServiceSetup,

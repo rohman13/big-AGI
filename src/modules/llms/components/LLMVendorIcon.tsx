@@ -13,6 +13,8 @@ import { AlibabaCloudIcon } from '~/common/components/icons/vendors/AlibabaCloud
 import { AnthropicIcon } from '~/common/components/icons/vendors/AnthropicIcon';
 import { AzureIcon } from '~/common/components/icons/vendors/AzureIcon';
 import { BedrockIcon } from '~/common/components/icons/vendors/BedrockIcon';
+import { CerebrasIcon } from '~/common/components/icons/vendors/CerebrasIcon';
+import { CohereIcon } from '~/common/components/icons/vendors/CohereIcon';
 import { DeepseekIcon } from '~/common/components/icons/vendors/DeepseekIcon';
 import { GeminiIcon } from '~/common/components/icons/vendors/GeminiIcon';
 import { GroqIcon } from '~/common/components/icons/vendors/GroqIcon';
@@ -40,6 +42,8 @@ const vendorIcons: Record<ModelVendorId, React.FunctionComponent<SvgIconProps>> 
   anthropic: AnthropicIcon,
   azure: AzureIcon,
   bedrock: BedrockIcon,
+  cerebras: CerebrasIcon,
+  cohere: CohereIcon,
   deepseek: DeepseekIcon,
   googleai: GeminiIcon,
   groq: GroqIcon,

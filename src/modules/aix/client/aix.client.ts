@@ -17,6 +17,7 @@ import { getLabsLosslessImages } from '~/common/stores/store-ux-labs';
 import { llmChatPricing_adjusted } from '~/common/stores/llms/llms.pricing';
 import { metricsStoreAddChatGenerate } from '~/common/stores/metrics/store-metrics';
 import { stripUndefined } from '~/common/util/objectUtils';
+import { videoPlayObjectUrl } from '~/common/util/video/videoPlayManaged';
 import { webGeolocationCached } from '~/common/util/webGeolocationUtils';
 
 
@@ -75,7 +76,7 @@ export function aixCreateModelFromLLMOptions(
     llmVndBedrockAPI,
     llmVndGeminiAgentViz, llmVndGeminiAspectRatio, llmVndGeminiImageSize, llmVndGeminiCodeExecution, llmVndGeminiComputerUse, llmVndGeminiGoogleSearch, llmVndGeminiMediaResolution, llmVndGeminiThinkingBudget,
     // llmVndMoonshotWebSearch,
-    llmVndOaiRestoreMarkdown, llmVndOaiVerbosity, llmVndOaiWebSearchContext, llmVndOaiWebSearchGeolocation, llmVndOaiImageGeneration, llmVndOaiCodeInterpreter,
+    llmVndOaiReasoningMode, llmVndOaiRestoreMarkdown, llmVndOaiVerbosity, llmVndOaiWebSearchContext, llmVndOaiWebSearchGeolocation, llmVndOaiImageGeneration, llmVndOaiCodeInterpreter,
     llmVndOrtWebSearch,
     llmVndPerplexityDateFilter, llmVndPerplexitySearchMode,
     llmVndXaiCodeExecution, llmVndXaiSearchInterval, llmVndXaiWebSearch, llmVndXaiXSearch, llmVndXaiXSearchHandles,
@@ -103,7 +104,9 @@ export function aixCreateModelFromLLMOptions(
   const llmVndGeminiInteractions = llmInterfaces.includes(LLM_IF_GEM_Interactions);
 
   // Client-side late stage model HotFixes
-  const hotfixOmitTemperature = llmInterfaces.includes(LLM_IF_HOTFIX_NoTemperature);
+  // [2026-07-09, OpenAI] effort 'none' unlocks temperature on NoTemperature reasoning models (sweep-verified 0..2 on
+  // GPT-5.x at reasoning_effort=none); only OpenAI defs combine the hotfix with llmVndOaiEffort, so the bypass is vendor-scoped
+  const hotfixOmitTemperature = llmInterfaces.includes(LLM_IF_HOTFIX_NoTemperature) && llmVndOaiEffort !== 'none';
 
   // User Geolocation
   let userGeolocation: AixAPI_Model['userGeolocation'] | undefined;
@@ -164,6 +167,7 @@ export function aixCreateModelFromLLMOptions(
     // ...(llmVndMoonshotWebSearch === 'auto' ? { vndMoonshotWebSearch: 'auto' } : {}),
 
     // OpenAI
+    ...(llmVndOaiReasoningMode ? { vndOaiReasoningMode: llmVndOaiReasoningMode } : {}),
     ...(llmVndOaiResponsesAPI ? { vndOaiResponsesAPI: true } : {}),
     ...(llmVndOaiRestoreMarkdown ? { vndOaiRestoreMarkdown: llmVndOaiRestoreMarkdown } : {}),
     ...(llmVndOaiVerbosity ? { vndOaiVerbosity: llmVndOaiVerbosity } : {}),
@@ -930,6 +934,10 @@ async function _aixChatGenerateContent_LL(
       void AudioPlayer.playUrl(audioUrl)
         .catch((error) => console.log('[AIX] Failed to play audio:', { error }))
         .finally(() => URL.revokeObjectURL(audioUrl));
+    },
+    (video) => {
+      // EXPERIMENTAL (Gemini Omni): play generated video in an ephemeral overlay; the object URL is revoked on close - nothing is persisted.
+      videoPlayObjectUrl(URL.createObjectURL(video.blob), video.label || 'AI Video');
     },
     abortSignal,
   );

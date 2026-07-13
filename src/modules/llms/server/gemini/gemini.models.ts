@@ -76,12 +76,23 @@ const geminiExpFree: ModelDescriptionSchema['chatPrice'] = {
 };
 
 
-// Pricing based on https://ai.google.dev/pricing (June 16, 2026)
+// Pricing based on https://ai.google.dev/pricing (June 26, 2026)
 
 const gemini35FlashPricing: ModelDescriptionSchema['chatPrice'] = {
   input: 1.50, // text/image/video; cache storage $1.00/MTok-hour (not tracked here)
   output: 9.00, // including thinking tokens
   cache: { cType: 'oai-ac', read: 0.15 },
+};
+
+// Gemini Omni Flash Preview (video generation), paid-tier only. Official (2026-06/07):
+//  - input  $1.50/MTok (text / image / video / audio)
+//  - output $9.00/MTok text (incl. thinking) OR $17.50/MTok video (5,792 tok/s of 720p, ~$0.10/s)
+// Our pricing model has a single output rate, not per-modality. A video-gen model's output is ~98%
+// video tokens (verified 2026-07-01: 57,920 of 58,948 output tokens were video), so we price output at
+// the VIDEO rate - the dominant modality. This slightly over-charges the tiny text/thinking slice.
+const geminiOmniPricing: ModelDescriptionSchema['chatPrice'] = {
+  input: 1.50,
+  output: 17.50,
 };
 
 const gemini31FlashLitePricing: ModelDescriptionSchema['chatPrice'] = {
@@ -95,6 +106,14 @@ const gemini31FlashImagePricing: ModelDescriptionSchema['chatPrice'] = {
   output: 3.00, // text/thinking output
   // NOTE: Additional image-specific pricing (not yet supported in schema):
   // - Image output: $60.00/MTok ($0.045/image 0.5K, $0.067/image 1K, $0.101/image 2K, $0.151/image 4K)
+};
+
+const gemini31FlashLiteImagePricing: ModelDescriptionSchema['chatPrice'] = {
+  input: 0.25, // text/image/video input (same as 3.1 Flash-Lite)
+  output: 1.50, // text and thinking output (same as 3.1 Flash-Lite)
+  // NOTE: Additional image-specific pricing (not yet supported in schema) - exactly half the Nano Banana 2 rate:
+  // - Image output: $30.00/MTok ($0.022/image 0.5K [747 tok], $0.034/image 1K [1120 tok], $0.050/image 2K [1680 tok], $0.076/image 4K [2520 tok])
+  //   The 1K equivalent ($0.0336) is official; 0.5K/2K/4K computed from the shared per-resolution token counts.
 };
 
 const gemini30ProPricing: ModelDescriptionSchema['chatPrice'] = {
@@ -297,6 +316,25 @@ const _knownGeminiModels = llmsDefineModels<_GeminiModelDef>()([
     benchmark: undefined, // Non-benchmarkable because generates images
   },
 
+  // 3.1 Flash-Lite Image (GA) - aka "Nano Banana 2 Lite" - Released June 30, 2026 (alongside Gemini Omni Flash); cost-efficient, ~4s image generation
+  // Added after the parameter sweep surfaced it: sweep shows fn roundtrip + thinkingLevel ['minimal','high']. Without this def it fell
+  // through to the generic fallback ([Chat,Vision,Fn], no params) and lost the thinking-level control. Modeled on gemini-3.1-flash-image.
+  // displayName + token limits verified live 2026-07-10 via /v1beta/models; GA date per Google's API changelog.
+  {
+    id: 'models/gemini-3.1-flash-lite-image',
+    labelOverride: 'Nano Banana 2 Lite',
+    pubDate: '20260630', // GA June 30, 2026 (announced with Gemini Omni Flash) - per Google's Gemini API changelog
+    chatPrice: gemini31FlashLiteImagePricing,
+    interfaces: IF_30,
+    parameterSpecs: [
+      { paramId: 'llmVndGemEffort', enumValues: ['minimal', 'high'] },
+      { paramId: 'llmVndGeminiGoogleSearch' },
+      { paramId: 'llmVndGeminiAspectRatio' },
+      { paramId: 'llmVndGeminiImageSize' },
+    ],
+    benchmark: undefined, // Non-benchmarkable because generates images
+  },
+
   // 3.1 Flash-Lite (Stable) - Released May 7, 2026 (graduated from preview)
   // First Flash-Lite model in the Gemini 3 series - cost-efficient, high-throughput
   {
@@ -454,6 +492,30 @@ const _knownGeminiModels = llmsDefineModels<_GeminiModelDef>()([
   },
 
   // Managed Agents - require the Interactions API (agent path, not generateContent)
+
+  // Gemini Omni Flash Preview - Released June 30, 2026. EXPERIMENTAL video generation.
+  // Text/image -> a short 720p video (3-10s, with baked-in audio). Rides the Interactions API but on the
+  // MODEL path (not an agent): the adapter's `isOmni` gate sends `model` + omits store/background, and the
+  // parser emits the inline mp4 as an EPHEMERAL video (played in-memory, NOT saved). Audio/video INPUT are
+  // unsupported (verified 2026-07-01: "Audio input modality is not enabled"). Vision (image) input is used
+  // for image-to-video. Output is billed by tokens (~58k for a short clip). See kb/modules/LLM-gemini-interactions.md.
+  {
+    id: 'models/gemini-omni-flash-preview',
+    labelOverride: 'Gemini Omni Flash Preview (video)',
+    pubDate: '20260630',
+    isPreview: true,
+    chatPrice: geminiOmniPricing, // paid-tier only: input $1.50, output priced at the video rate $17.50/MTok (~$0.10/s of 720p)
+    interfaces: [
+      LLM_IF_HOTFIX_Sys0ToUsr0, //
+      LLM_IF_OAI_Chat, LLM_IF_OAI_Vision, LLM_IF_GEM_Interactions, // Vision = image input (image-to-video); Interactions routes to the model-path video dispatch
+    ],
+    // parameterSpecs: [
+    //   { paramId: 'llmVndGeminiVideoSeed' }, // generation_config.seed - the tunable Omni reliably honors (verified 2026-07-05)
+    //   { paramId: 'llmVndGeminiAspectRatio' }, // -> generation_config.image_config.aspect_ratio (probed 'not enabled for this model', wired for live judgment)
+    //   { paramId: 'llmVndGeminiImageSize' }, // -> generation_config.image_config.image_size (probed silently-ignored, wired for live judgment). temperature is implicit (LLM_IF_OAI_Chat), forwarded via model.temperature
+    // ],
+    benchmark: undefined, // video generation, not benchmarkable on standard tests
+  },
 
   // Antigravity Agent Preview - Released May 19, 2026
   // General-purpose managed agent: powered by Gemini 3.5 Flash, runs inside a Google-hosted Linux
@@ -643,8 +705,9 @@ const _knownGeminiModels = llmsDefineModels<_GeminiModelDef>()([
   },
 
   // REMOVED MODELS - we do not support Native Audio / Live API models:
+  // - models/gemini-3.5-live-translate-preview (Live API, real-time translation)
   // - models/gemini-3.1-flash-live-preview (Live API, released March 26, 2026)
-  // - models/gemini-2.5-flash-native-audio-preview-12-2025
+  // - models/gemini-2.5-flash-native-audio-latest / -preview-09-2025 / -preview-12-2025
   // REMOVED MODELS (old dialog models superseded by native audio preview):
   // - models/gemini-2.5-flash-preview-native-audio-dialog
   // - models/gemini-2.5-flash-exp-native-audio-thinking-dialog
@@ -857,8 +920,10 @@ const _sortOderIdPrefix: string[] = [
   'models/gemini-3.5',
   'models/gemini-3.1-pro-preview',
   'models/gemini-3.1-pro-preview-customtools',
+  'models/gemini-omni-flash-preview', // display: after the 3.1 Pro models, before Nano Banana 2 (this list, not the _knownGeminiModels order, drives display sort - geminiSortModels)
   'models/gemini-3.1-flash-image',
   'models/gemini-3.1-flash-image-preview',
+  'models/gemini-3.1-flash-lite-image',
   'models/gemini-3.1-flash-preview',
   'models/gemini-3.1-flash-lite',
   'models/gemini-3.1-flash-lite-preview',
