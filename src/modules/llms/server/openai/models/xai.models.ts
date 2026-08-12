@@ -5,7 +5,9 @@ import { fetchJsonOrTRPCThrow } from '~/server/trpc/trpc.router.fetchers';
 import { LLM_IF_OAI_Chat, LLM_IF_OAI_Fn, LLM_IF_OAI_Reasoning, LLM_IF_OAI_Vision } from '~/common/stores/llms/llms.types';
 import { Release } from '~/common/app.release';
 
-import type { ModelDescriptionSchema } from '../../llm.server.types';
+import type { DModelParameterId } from '~/common/stores/llms/llms.parameters';
+
+import type { ModelDescriptionSchema, OrtVendorLookupResult } from '../../llm.server.types';
 import { OPENAI_API_PATHS, openAIAccess, OpenAIAccessSchema } from '../openai.access';
 import type { KnownLink, KnownModel } from '../../models.mappings';
 import { fromManualMapping, llmsDefineModels, llmDevCheckModels_DEV } from '../../models.mappings';
@@ -23,6 +25,8 @@ const DEV_DEBUG_XAI_MODELS = (Release.TenantSlug as any) === 'staging' /* ALSO I
 // Verified: 2026-06-16 via live /v1/language-models (post-2026-05-15 retirement: grok-4-1-fast, grok-4-fast, grok-4-0709, grok-3, grok-3-mini, grok-2-vision-1212 redirect to grok-4.3; grok-code-fast-1 now aliases grok-build-0.1)
 // Re-confirmed: 2026-06-26 via docs.x.ai (no API key this run): same 5 chat models, same pricing/context windows
 // Verified: 2026-07-08 via live /v1/language-models + live probes: +grok-4.5 (released today); API now reports >200K long-context price tiers for ALL models (carried below as tiered pricing)
+// Verified: 2026-08-04 via live /v1/language-models + docs.x.ai + effort probes: same 6 chat models, contexts unchanged; fixed grok-4.5 cached-input price (0.30/0.60, was 0.50/1.00)
+// Verified: 2026-08-06 via live /v1/language-models + /v1/models + docs.x.ai + effort/tool probes: same 6 chat models, prices/contexts unchanged; grok-4.5 'xhigh' still accepted (docs table only lists low/medium/high)
 
 // Pricing for Grok 4.3 / 4.20 flagship family (unified $1.25/$2.50 since May 2026; >200K tier per live API 2026-07-08)
 const PRICE_FLAGSHIP = {
@@ -69,7 +73,7 @@ const _knownXAIChatModels = llmsDefineModels<_XaiModelDef>()([
     idPrefix: 'grok-4.5',
     label: 'Grok 4.5',
     pubDate: '20260708',
-    description: 'xAI\'s smartest and fastest model with frontier performance on coding, knowledge work, and STEM - recommended by xAI for both chat and code. 500K token context window, text and image inputs, always-on reasoning with effort control (low/medium/high/xhigh). Knowledge cutoff: November 2024. Aliases: grok-4.5-latest, grok-build-latest.',
+    description: 'xAI\'s smartest and fastest model with frontier performance on coding, knowledge work, and STEM - recommended by xAI for both chat and code. 500K token context window, text and image inputs, always-on reasoning with effort control (low/medium/high/xhigh). Knowledge cutoff: February 2026. Aliases: grok-4.5-latest, grok-build-latest.',
     contextWindow: 500000,
     maxCompletionTokens: undefined,
     interfaces: [...XAI_IF_Vision, LLM_IF_OAI_Reasoning],
@@ -80,9 +84,9 @@ const _knownXAIChatModels = llmsDefineModels<_XaiModelDef>()([
     chatPrice: {
       input: [{ upTo: 200000, price: 2.00 }, { upTo: null, price: 4.00 }],
       output: [{ upTo: 200000, price: 6.00 }, { upTo: null, price: 12.00 }],
-      cache: { cType: 'oai-ac', read: [{ upTo: 200000, price: 0.50 }, { upTo: null, price: 1.00 }] },
+      cache: { cType: 'oai-ac', read: [{ upTo: 200000, price: 0.30 }, { upTo: null, price: 0.60 }] },
     },
-    // benchmark: no CBA Elo yet (released 2026-07-08)
+    benchmark: { cbaElo: 1468 }, // grok-4.5
   },
 
   // Grok 4.3 (flagship, April 2026) - reasoning_effort: none/low(default)/medium/high/xhigh
@@ -90,7 +94,7 @@ const _knownXAIChatModels = llmsDefineModels<_XaiModelDef>()([
     idPrefix: 'grok-4.3',
     label: 'Grok 4.3',
     pubDate: '20260417',
-    description: 'xAI\'s latest flagship model with reasoning and a 1M token context window. Supports text and image inputs, with reasoning_effort control (none/low/medium/high/xhigh). Knowledge cutoff: November 2024.',
+    description: 'xAI\'s latest flagship model with reasoning and a 1M token context window. Supports text and image inputs, with reasoning_effort control (none/low/medium/high/xhigh). Knowledge cutoff: December 2025.',
     contextWindow: 1000000,
     maxCompletionTokens: undefined,
     interfaces: [...XAI_IF_Vision, LLM_IF_OAI_Reasoning],
@@ -99,7 +103,7 @@ const _knownXAIChatModels = llmsDefineModels<_XaiModelDef>()([
       ...XAI_PAR_Reasoning,
     ],
     chatPrice: PRICE_FLAGSHIP,
-    benchmark: { cbaElo: 1456 }, // grok-4.3
+    benchmark: { cbaElo: 1442 }, // grok-4.3
   },
 
   // Grok 4.20 (flagship, March 2026) - superseded by 4.3 but still active with unified pricing
@@ -113,7 +117,7 @@ const _knownXAIChatModels = llmsDefineModels<_XaiModelDef>()([
     interfaces: [...XAI_IF_Vision, LLM_IF_OAI_Reasoning],
     parameterSpecs: XAI_PAR_Reasoning,
     chatPrice: PRICE_FLAGSHIP,
-    benchmark: { cbaElo: 1480 }, // grok-4.20-beta-0309-reasoning (CBA name)
+    benchmark: { cbaElo: 1472 }, // grok-4.20-beta-0309-reasoning (CBA name)
   },
   {
     idPrefix: 'grok-4.20-0309-non-reasoning',
@@ -125,7 +129,7 @@ const _knownXAIChatModels = llmsDefineModels<_XaiModelDef>()([
     interfaces: XAI_IF_Vision,
     parameterSpecs: XAI_PAR,
     chatPrice: PRICE_FLAGSHIP,
-    benchmark: { cbaElo: 1482 }, // grok-4.20-beta1 (CBA name)
+    benchmark: { cbaElo: 1475 }, // grok-4.20-beta1 (CBA name)
   },
   {
     idPrefix: 'grok-4.20-multi-agent-0309',
@@ -134,14 +138,14 @@ const _knownXAIChatModels = llmsDefineModels<_XaiModelDef>()([
     description: 'Multi-agent model that runs specialized agents in parallel for collaborative verification with reduced hallucination. Reasoning effort selects 4 vs 16 agents.',
     contextWindow: 1000000,
     maxCompletionTokens: undefined,
-    // no LLM_IF_OAI_Fn: multi-agent does not support function calling
+    // no LLM_IF_OAI_Fn: client-side tools on multi-agent are beta-gated (2026-08-06 probe: 400 'require beta access')
     interfaces: [LLM_IF_OAI_Chat, LLM_IF_OAI_Vision, LLM_IF_OAI_Reasoning],
     parameterSpecs: [
       { paramId: 'llmVndOaiEffort', enumValues: ['none', 'low', 'medium', 'high', 'xhigh'] }, // 'none' disables reasoning (per 2026-06 sweep); low/medium = 4 agents, high/xhigh = 16 agents
       ...XAI_PAR_Reasoning,
     ],
     chatPrice: PRICE_FLAGSHIP,
-    benchmark: { cbaElo: 1474 }, // grok-4.20-multi-agent-beta-0309
+    benchmark: { cbaElo: 1471 }, // grok-4.20-multi-agent-beta-0309
   },
 
   // Retired (slugs still resolve, redirect to grok-4.3 at $1.25/$2.50 pricing):
@@ -304,6 +308,43 @@ function _xaiFormatNewModelLabel(modelId: string): string {
   });
 
   return '[new] ' + cleanedParts.join(' ') + (hasBeta ? ' (beta)' : '');
+}
+
+
+// --- OpenRouter inheritance ---
+
+const _ORT_XAI_IF_ALLOWLIST: ReadonlySet<string> = new Set([
+  LLM_IF_OAI_Chat, LLM_IF_OAI_Vision, LLM_IF_OAI_Fn, LLM_IF_OAI_Reasoning,
+] as const);
+
+// only the effort spec travels: xAI's server-side tools are native-only, OR does not tunnel them
+const _ORT_XAI_PARAM_ALLOWLIST: ReadonlySet<string> = new Set([
+  'llmVndOaiEffort',
+] as const satisfies DModelParameterId[]);
+
+/**
+ * Lookup for OpenRouter: match an OR xAI model ID to a known hardcoded xAI model.
+ * OR's `reasoning.supported_efforts` omits 'xhigh' for grok-4.3/4.5, both verified working 2026-07-31 - so our swept
+ * definitions own the effort list, and OR's `reasoning.mandatory` is used only to subtract 'none'.
+ * @param orModelName - The model name after stripping 'x-ai/' (e.g. 'grok-4.5')
+ */
+export function llmOrtXaiLookup(orModelName: string): OrtVendorLookupResult | undefined {
+
+  // OR collapses the dated native ids. Unmapped: 'grok-4.20' (native splits reasoning/non-reasoning, OR's single id is
+  // a binary toggle - verified), 'grok-build-0.1' (native has no effort spec).
+  const ortXaiRefMap: Record<string, string> = {
+    'grok-4.20-multi-agent': 'grok-4.20-multi-agent-0309',
+  };
+  const entry = _knownXAIChatModels.find(m => m.idPrefix === (ortXaiRefMap[orModelName] ?? orModelName));
+  if (!entry?.interfaces) return undefined;
+
+  const interfaces = entry.interfaces.filter(i => _ORT_XAI_IF_ALLOWLIST.has(i));
+
+  const parameterSpecs = entry.parameterSpecs
+    ?.filter(spec => _ORT_XAI_PARAM_ALLOWLIST.has(spec.paramId))
+    .map(spec => ({ ...spec }));
+
+  return { pubDate: entry.pubDate, interfaces, parameterSpecs };
 }
 
 
