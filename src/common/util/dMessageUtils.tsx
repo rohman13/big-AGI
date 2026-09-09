@@ -263,9 +263,18 @@ export function useMessageAvatarLabel(
     const metrics = generator.metrics ? prettyMessageMetrics(generator.metrics, complexity) : null;
     const stopReason = generator.tokenStopReason ? prettyTokenStopReason(generator.tokenStopReason, complexity) : null;
 
+    // aix label: in Extra mode, the routed infra provider (e.g. OpenRouter routing) shows inline - it explains
+    // per-message cost/speed variance without opening the tooltip
+    const infraLabel = complexity === 'extra' ? generator.providerInfraLabel : undefined;
+    const showStopReason = !!stopReason && complexity !== 'minimal';
+
     // aix tooltip: more details
     return {
-      label: (stopReason && complexity !== 'minimal') ? <>{prettyName} <small>({stopReason})</small></> : prettyName,
+      label: (infraLabel || showStopReason) ? <>
+        {prettyName}
+        {infraLabel && <> <small>· via {infraLabel}</small></>}
+        {showStopReason && <> <small>({stopReason})</small></>}
+      </> : prettyName,
       tooltip: complexity === 'minimal' ? null : (
         <Box sx={tooltipSx}>
           {VendorIcon ? <Box sx={tooltipIconContainerSx}><VendorIcon />{generator.name}</Box> : <div>{generator.name}</div>}
@@ -293,6 +302,12 @@ export function prettyMessageMetrics(metrics: DMessageGenerator['metrics'], uiCo
 
   const costCode = metrics.$code ? _prettyCostCode(metrics.$code) : null;
 
+  // the provider-reported (billed) cost is the headline when present; the price-table estimate demotes to a footnote
+  const $cHeadline = metrics.$cReported ?? metrics.$c;
+  const $cEstimated = (metrics.$cReported !== undefined && metrics.$c !== undefined) ? metrics.$c : undefined;
+  // cost by class, when cache or tools are in play
+  const showCostByClass = metrics.$cCacheR !== undefined || metrics.$cCacheW !== undefined || metrics.$cTools !== undefined;
+
   return <Box sx={tooltipMetricsGridSx}>
 
     {/* Tokens */}
@@ -304,6 +319,7 @@ export function prettyMessageMetrics(metrics: DMessageGenerator['metrics'], uiCo
       {', '}<b>{metrics.TOut?.toLocaleString() || ''}</b> out
       {metrics.TOutR !== undefined && <> (<b>{metrics.TOutR?.toLocaleString() || ''}</b> for reasoning)</>}
       {/*{metrics.TOutA !== undefined && <> (<b>{metrics.TOutA?.toLocaleString() || ''}</b> for audio)</>}*/}
+      {!!metrics.nWebSearch && <>{', '}<b>{metrics.nWebSearch.toLocaleString()}</b> {metrics.nWebSearch === 1 ? 'search' : 'searches'}</>}
     </div>}
 
     {/* Timings */}
@@ -317,24 +333,35 @@ export function prettyMessageMetrics(metrics: DMessageGenerator['metrics'], uiCo
     </div>}
 
     {/* Costs */}
-    {metrics?.$c !== undefined && <div>Costs:</div>}
-    {metrics?.$c !== undefined && <div>
-      <b>{formatModelsCost(metrics.$c / 100)}</b>
+    {$cHeadline !== undefined && <div>Costs:</div>}
+    {$cHeadline !== undefined && <div>
+      <b>{formatModelsCost($cHeadline / 100)}</b>
       {metrics.$cdCache !== undefined && <>
         {' '}<small>(
         {metrics.$cdCache > 0
           ? <>cache savings: <b>{formatModelsCost(metrics.$cdCache / 100)}</b></>
-          : <>cache costs: <b>{formatModelsCost(-metrics.$cdCache / 100)}</b></>
+          : <>cache surcharge: <b>{formatModelsCost(-metrics.$cdCache / 100)}</b></>
         })</small>
       </>}
+      {metrics.$xPrice !== undefined && metrics.$xPrice !== 1 && <>{' '}<small>at <b>{metrics.$xPrice}x</b> tier</small></>}
     </div>}
-    {/* Add the 'reported' costs underneath, if defined */}
-    {metrics?.$cReported !== undefined && <div>{metrics?.$c !== undefined ? '' : 'Costs:'}</div>}
-    {metrics?.$cReported !== undefined && <div>
-      <small>reported: <b>{formatModelsCost(metrics.$cReported / 100)}</b></small>
+    {showCostByClass && <div></div>}
+    {showCostByClass && <div>
+      <small>
+        {metrics.$cIn !== undefined && <>in {formatModelsCost(metrics.$cIn / 100)}</>}
+        {metrics.$cCacheR !== undefined && <>{' · '}read {formatModelsCost(metrics.$cCacheR / 100)}</>}
+        {metrics.$cCacheW !== undefined && <>{' · '}wrote {formatModelsCost(metrics.$cCacheW / 100)}</>}
+        {metrics.$cOut !== undefined && <>{' · '}out {formatModelsCost(metrics.$cOut / 100)}</>}
+        {metrics.$cTools !== undefined && <>{' · '}tools {formatModelsCost(metrics.$cTools / 100)}</>}
+      </small>
+    </div>}
+    {/* Add the local price-table estimate underneath, when the headline is the billed cost */}
+    {$cEstimated !== undefined && <div></div>}
+    {$cEstimated !== undefined && <div>
+      <small>estimated: {formatModelsCost($cEstimated / 100)}</small>
     </div>}
     {/* Add the cost 'code' underneath, if any */}
-    {costCode && <div>{(metrics?.$c !== undefined || metrics?.$cReported !== undefined) ? '' : 'Costs:'}</div>}
+    {costCode && <div>{$cHeadline !== undefined ? '' : 'Costs:'}</div>}
     {costCode && <div><em>{costCode}</em></div>}
 
     {/* Time */}
@@ -545,6 +572,12 @@ export function prettyShortChatModelName(model: string | undefined): string {
       .replace(/-20\d{6}$/, '') // strip dated snapshot suffix (e.g. -20260615)
       .split('-').map(s => /^v\d/.test(s) ? s : s.charAt(0).toUpperCase() + s.slice(1)).join(' '); // keep version tokens as-is (v1.1, not V1.1)
   }
+  // [Meta AI] muse-spark-1.3, muse-spark-1.3-contributor, muse-image-1.0 (service prefix already stripped by the auto-label heuristic)
+  if (model.startsWith('muse-')) {
+    return model
+      .replace(/-contributor$/, ' (Contributor)')
+      .split('-').map(s => /^\d/.test(s) ? s : s.charAt(0).toUpperCase() + s.slice(1)).join(' '); // keep version tokens as-is (1.3)
+  }
   // [FireworksAI]
   if (model.includes('accounts/')) {
     const index = model.indexOf('accounts/');
@@ -609,8 +642,8 @@ function _prettyGeminiModelName(cutModel: string): string {
 function _prettyAnthropicModelName(modelId: string): string | null {
   if (!modelId.includes('claude-')) return null;
 
-  // extract version as N.M (e.g. `-4-7` -> 4.7, `-4-` -> 4); (?!\d) guards against date digits
-  const m = modelId.match(/-(\d)(?:-(\d)(?!\d))?/);
+  // extract version as N.M (e.g. `-4-7` -> 4.7, `-4-` -> 4); `[-.]` also reads OpenRouter's dotted ids (`-5.1`); (?!\d) guards against date digits
+  const m = modelId.match(/-(\d)(?:[-.](\d)(?!\d))?/);
   const version = m ? (m[2] ? `${m[1]}.${m[2]}` : m[1]) : '?';
 
   if (modelId.includes('-fable')) return `Claude Fable ${version}`;

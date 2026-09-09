@@ -40,6 +40,7 @@
 //                                        BIGAGI_TEST_LMSTUDIO_HOST)
 //   openai-compatible   localai         (opt-in via             localhost:8080
 //                                        BIGAGI_TEST_LOCALAI_HOST)
+//   openai-compatible   metaai          METAAI_API_KEY          api.meta.ai
 //   openai-compatible   mistral         MISTRAL_API_KEY         api.mistral.ai
 //   openai-compatible   moonshot        MOONSHOT_API_KEY        api.moonshot.ai
 //   openai-compatible   nvidianim       NVIDIANIM_API_KEY       integrate.api.nvidia.com (listing is PUBLIC)
@@ -60,6 +61,7 @@ import type { AixAPI_Access } from '../../aix/server/api/aix.wiretypes';
 import type { ModelDescriptionSchema } from './llm.server.types';
 
 import { listModelsRunDispatch } from './listModels.dispatch';
+import { llmsIsLabelUncurated } from './models.mappings';
 
 // DEV-gated validators and flags (llmDevValidateParameterSpecs_DEV,
 // Release.IsNodeDevBuild, DEV_DEBUG_OPENROUTER_MODELS, ...) capture NODE_ENV at
@@ -257,10 +259,30 @@ describe('listModels enumeration', () => {
     );
   });
 
+  test('openai-compat/metaai: live listing', { skip: skipIfMissing('METAAI_API_KEY') }, async () => {
+    const models = await expectOk(
+      { dialect: 'metaai', ...openAIShape({ oaiKey: E.METAAI_API_KEY || '' }) } as AixAPI_Access,
+      1, 'metaai/live',
+    );
+    // the catalog mixes families and the list API has no type field: the transcription id must be filtered out, the image model curated
+    ok(!models.some(m => m.id.startsWith('muse-voice-')), 'metaai: transcription model is dropped');
+    ok(models.some(m => m.id.startsWith('muse-spark-')), 'metaai: Muse Spark family present');
+    ok(models.filter(m => m.id.startsWith('muse-image-')).every(m => m.interfaces.includes('outputs-image')), 'metaai: Muse Image is an image-output model');
+    // curated chat entries always carry a measured context; 0-day '[?]' arrivals and the image model (undocumented) legitimately have null
+    ok(models.filter(m => !llmsIsLabelUncurated(m.label) && !m.interfaces.includes('outputs-image')).every(m => m.contextWindow !== null), 'metaai: all curated chat models carry a context window');
+  });
+
   test('openai-compat/mistral: live listing', { skip: skipIfMissing('MISTRAL_API_KEY') }, async () => {
     await expectOk(
       { dialect: 'mistral', ...openAIShape({ oaiKey: E.MISTRAL_API_KEY || '' }) } as AixAPI_Access,
       1, 'mistral/live',
+    );
+  });
+
+  test('openai-compat/modular: live listing', { skip: skipIfMissing('MODULAR_API_KEY') }, async () => {
+    await expectOk(
+      { dialect: 'modular', ...openAIShape({ oaiKey: E.MODULAR_API_KEY || '' }) } as AixAPI_Access,
+      1, 'modular/live',
     );
   });
 
@@ -282,7 +304,7 @@ describe('listModels enumeration', () => {
     );
     ok(models.some(m => m.id.startsWith('nvidia/nemotron-3-')), 'nvidianim: Nemotron 3 family present');
     // curated entries always carry a measured context; 0-day '[?]' arrivals legitimately have null
-    ok(models.filter(m => !m.label.startsWith('[?]')).every(m => m.contextWindow !== null), 'nvidianim: all curated models carry a context window');
+    ok(models.filter(m => !llmsIsLabelUncurated(m.label)).every(m => m.contextWindow !== null), 'nvidianim: all curated models carry a context window');
   });
 
   test('openai-compat/openai via nvidia host: curated list via heuristic', { skip: skipIfMissing('NVIDIANIM_API_KEY') }, async () => {

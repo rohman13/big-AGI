@@ -5,7 +5,7 @@ import type { AnthropicHostedFeatures } from '~/modules/llms/server/anthropic/an
 import type { AixAPI_Model, AixAPIChatGenerate_Request, AixMessages_ChatMessage, AixTools_ToolDefinition, AixTools_ToolsPolicy } from '../../../api/aix.wiretypes';
 import { AnthropicWire_API_Message_Create, AnthropicWire_Blocks } from '../../wiretypes/anthropic.wiretypes';
 
-import { AIX_MISSING_TOOL_RESULT_TEXT, aixSpillShallFlush, aixSpillSystemToUser, approxDocPart_To_String, approxInReferenceTo_To_XMLString } from './adapters.common';
+import { AIX_MISSING_TOOL_RESULT_TEXT, aixSpillShallFlush, aixSpillSystemToUser, approxDocPart_To_String, approxInReferenceTo_To_XMLString, approxMediaUrlPart_To_String } from './adapters.common';
 
 
 // configuration
@@ -25,10 +25,19 @@ type TRequest = AnthropicWire_API_Message_Create.Request;
 
 
 /**
+ * Which endpoint the Messages payload is built for.
+ * Not merely an envelope difference: the AWS Bedrock `bedrock-2023-05-31` passthrough validates the
+ * body against its own schema and 400s on api.anthropic.com-only fields, so the adapter has to know
+ * where the request is going. Keep every target-conditional field in the one block at the bottom.
+ */
+export type AixAnthropicTarget = 'anthropic' | 'bedrock';
+
+
+/**
  * Determines which Anthropic hosted features will be active for a request.
  * Single source of truth for both the request builder (tools, container) and the dispatch (beta headers).
  */
-export function aixAnthropicHostedFeatures(model: AixAPI_Model, chatGenerate: AixAPIChatGenerate_Request): AnthropicHostedFeatures {
+export function aixAnthropicHostedFeatures(model: AixAPI_Model, chatGenerate: AixAPIChatGenerate_Request, target: AixAnthropicTarget = 'anthropic'): AnthropicHostedFeatures {
 
   // Allow/deny auto-adding hosted tools when custom tools are present with a restrictive policy
   const _hasAixCustomTools = chatGenerate.tools?.some(t => t.type === 'function_call');
@@ -67,11 +76,12 @@ export function aixAnthropicHostedFeatures(model: AixAPI_Model, chatGenerate: Ai
     enableSkills: !!model.vndAntSkills,
     enableStrictOutputs: !!model.strictJsonOutput || !!model.strictToolInvocations,
     enableToolAdvanced20251120: !!model.vndAntToolSearch || programmaticToolCalling,
+    enableThinkingBindingControls: target === 'anthropic', // every thinking request; Bedrock 400s the body field (probed 2026-09-01)
     modelIdForPerModelFeatures: model.id,
   };
 }
 
-export function aixToAnthropicMessageCreate(model: AixAPI_Model, _chatGenerate: AixAPIChatGenerate_Request, streaming: boolean, hostedFeatures: ReturnType<typeof aixAnthropicHostedFeatures>): TRequest {
+export function aixToAnthropicMessageCreate(target: AixAnthropicTarget, model: AixAPI_Model, _chatGenerate: AixAPIChatGenerate_Request, streaming: boolean, hostedFeatures: ReturnType<typeof aixAnthropicHostedFeatures>): TRequest {
 
   // Pre-process CGR - approximate spill of System to User message
   const chatGenerate = aixSpillSystemToUser(_chatGenerate);
@@ -209,6 +219,7 @@ export function aixToAnthropicMessageCreate(model: AixAPI_Model, _chatGenerate: 
   // [Anthropic, 2026-06-09] Fable 5 / Mythos 5: adaptive is the only thinking mode - 'enabled' (budget_tokens) and 'disabled' return 400
   // [2026-07-24] Opus 5 launch-verified: adaptive-only too ('enabled'/budget_tokens return 400), so 'opus' stays in this regex.
   // (Opus 5 nuance: 'disabled' is legal at effort <= high, but we coerce to adaptive anyway - single always-thinking entry.)
+  // [2026-09-01] Fable/Mythos 5.1: unchanged (launch-verified) - the regex covers '-5-1'.
   const hotFixAdaptiveThinkingOnlyModel = /claude-(fable|mythos|opus)-5/.test(model.id);
 
   // HOTFIX: Fable/Mythos 5 ONLY reject forced tool use: 400 'tool_choice forces tool use is not compatible with this model.'
@@ -216,6 +227,7 @@ export function aixToAnthropicMessageCreate(model: AixAPI_Model, _chatGenerate: 
   // reliably calls the tool when instructed. Forced tool use is deprecated AIX-wide, see ToolsPolicy_schema.
   // [2026-07-24] Opus 5 EXCLUDED (launch probes): tool_choice 'any'/'tool' return 200 with thinking left to its
   // adaptive-on default, so requests pass through unchanged (thinking is skipped below when tools are forced).
+  // [2026-09-01] Fable/Mythos 5.1: same 400, reworded 'tool_choice: type "tool" and "any" are not supported for this model.'
   const hotFixNoForcedToolUse = /claude-(fable|mythos)-5/.test(model.id);
   if (hotFixNoForcedToolUse && payload.tool_choice && (payload.tool_choice.type === 'any' || payload.tool_choice.type === 'tool')) {
     const mustUseHint = payload.tool_choice.type === 'tool'
@@ -257,6 +269,12 @@ export function aixToAnthropicMessageCreate(model: AixAPI_Model, _chatGenerate: 
       //       see the note on llms.parameters.ts: 'llmVndAntThinkingBudget'
     }
   }
+
+  // [Anthropic, 2026-09-01] Preserved thinking: on Fable 5.1+ a replayed thinking block is valid only against the unchanged
+  // system/tools/history prefix, and new accounts 400 after any edit (routine here: edits, deletes, persona/tool changes).
+  // 'drop_block' drops the stale blocks instead (accepted on every model, probed); the parser relays the drops as 'input-transform' particles.
+  if (hostedFeatures.enableThinkingBindingControls && payload.thinking && payload.thinking.type !== 'disabled')
+    payload.thinking.block_binding = { prefix_mismatch_behavior: 'drop_block' };
 
   // [Anthropic] Effort parameter
   const reasoningEffort = model.reasoningEffort; // ?? model.vndAntEffort;
@@ -383,6 +401,43 @@ export function aixToAnthropicMessageCreate(model: AixAPI_Model, _chatGenerate: 
   }
 
 
+  // --- Target: remove api.anthropic.com-only fields ---
+  // Bedrock's `bedrock-2023-05-31` passthrough validates the body and rejects anything it does not
+  // know ("<field>: Extra inputs are not permitted", HTTP 400). Keep all such strips here, in one
+  // place - `model`/`stream` are NOT in this list, they are envelope translation (see the dispatch).
+  if (target === 'bedrock') {
+
+    /**
+     * Reasoning effort on Bedrock is a 4.5-GENERATION limitation, NOT Bedrock-wide (live-probed
+     * 2026-08-05): opus-4-5-20251101 / sonnet-4-5-20250929 / haiku-4-5-20251001 all 400 with
+     * 'output_config.effort: Extra inputs are not permitted' (also observed in prod 2026-08-03 on
+     * us.anthropic.claude-opus-4-5, invoke + streaming), while opus-4-6 and sonnet-4-6 ACCEPT effort
+     * (200) - so the strip is model-scoped to not penalize 4.6+. 4.7/4.8/5-family were not probeable
+     * (403 on the test account) and are assumed accepting, being newer than 4.6; if one 400s, extend
+     * the regex. There is no 4.5 fallback to map effort onto - `thinking.budget_tokens` is a different
+     * knob and is already sent when the user sets one - so on 4.5 effort is silently dropped and the
+     * model answers at its default depth. The Effort control is also filtered per-model out of Bedrock
+     * model definitions (`_BEDROCK_EFFORT_REJECTING_MODELS` in llms .../anthropic.models.ts - keep the
+     * two regexes in sync), but this strip is what actually fixes it: it covers values already
+     * persisted in a user's per-model parameters, the 'Max reasoning' exec override, and the
+     * forced-tool-use hotfix above (which sets effort itself).
+     * `output_config.format` (strict JSON) is deliberately kept: the 400 names the NESTED `effort` key,
+     * so Bedrock does know `output_config` - whether it also takes `format` is untested, don't guess.
+     */
+    if (payload.output_config?.effort && /claude-(opus|sonnet|haiku)-4-5-\d{8}/.test(model.id)) {
+      delete payload.output_config.effort;
+      if (!Object.keys(payload.output_config).length)
+        delete payload.output_config;
+    }
+
+    // Fast inference mode is not offered on partner clouds: 400 'speed: Extra inputs are not permitted'
+    delete payload.speed;
+
+    // Preserved-thinking controls: 400 'thinking.adaptive.block_binding: Extra inputs are not permitted' (never set for this target)
+    if (payload.thinking && payload.thinking.type !== 'disabled')
+      delete payload.thinking.block_binding;
+  }
+
   // Preemptive error detection with server-side payload validation before sending it upstream
   const validated = AnthropicWire_API_Message_Create.Request_schema.safeParse(payload);
   if (!validated.success) {
@@ -493,6 +548,11 @@ function* _generateAnthropicMessagesContentBlocks({ parts, role }: AixMessages_C
 
           case 'doc':
             yield { role: 'user', content: AnthropicWire_Blocks.TextBlock(approxDocPart_To_String(part), 'user.doc') };
+            break;
+
+          case 'media_url':
+            // URL-referenced video: Anthropic cannot watch it - honest text degradation
+            yield { role: 'user', content: AnthropicWire_Blocks.TextBlock(approxMediaUrlPart_To_String(part), 'user.media_url') };
             break;
 
           case 'meta_in_reference_to':

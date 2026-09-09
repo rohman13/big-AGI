@@ -425,6 +425,13 @@ function _toGeminiContents(chatSequence: AixMessages_ChatMessage[], apiRequiresS
             partRequiresSignature = true;
           break;
 
+        case 'media_url':
+          // URL-referenced video (YouTube or direct https): native fileData - Google fetches it server-side.
+          // FUTURE: when the wire part regains clipStartSec/clipEndSec/fps, lower them to the third
+          // FileDataPart arg (videoMetadata: startOffset '<n>s' / endOffset / fps - probe-verified, clips bill only the slice)
+          parts.push(GeminiWire_ContentParts.FileDataPart(part.url, part.mimeType));
+          break;
+
         case 'doc':
           parts.push(_toApproximateGeminiDocPart(part));
           break;
@@ -467,7 +474,7 @@ function _toGeminiContents(chatSequence: AixMessages_ChatMessage[], apiRequiresS
             case 'code_execution':
               if (invocation.language?.toLowerCase() !== 'python')
                 console.warn('Gemini only supports Python code execution, but got:', invocation.language);
-              parts.push(GeminiWire_ContentParts.ExecutableCodePart('PYTHON', invocation.code));
+              parts.push(GeminiWire_ContentParts.ExecutableCodePart('PYTHON', invocation.code, part.id));
               break;
             default:
               const _exhaustiveCheck: never = invocation;
@@ -501,7 +508,7 @@ function _toGeminiContents(chatSequence: AixMessages_ChatMessage[], apiRequiresS
               parts.push(GeminiWire_ContentParts.FunctionResponsePart({ id: part.id, name: part.response.name, response: functionResponseResponse }));
               break;
             case 'code_execution':
-              parts.push(GeminiWire_ContentParts.CodeExecutionResultPart(!part.error ? 'OUTCOME_OK' : 'OUTCOME_FAILED', toolErrorPrefix + part.response.result));
+              parts.push(GeminiWire_ContentParts.CodeExecutionResultPart(!part.error ? 'OUTCOME_OK' : 'OUTCOME_FAILED', toolErrorPrefix + part.response.result, part.id));
               break;
             default:
               const _exhaustiveCheck: never = part.response;

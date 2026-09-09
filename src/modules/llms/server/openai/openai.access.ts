@@ -4,8 +4,9 @@
  * This module only imports zod for schema definition and provides access logic
  * that works identically on server and client environments.
  *
- * Supports 18 OpenAI-compatible dialects: alibaba, azure, cerebras, cohere, deepseek, groq, lmstudio,
- * localai, mistral, moonshot, nvidianim, openai, openrouter, perplexity, sakanaai, togetherai, xai, zai
+ * Supports 20 OpenAI-compatible dialects: alibaba, azure, cerebras, cohere, deepseek, groq, lmstudio,
+ * localai, metaai, mistral, modular, moonshot, nvidianim, openai, openrouter, perplexity, sakanaai,
+ * togetherai, xai, zai
  */
 
 import * as z from 'zod/v4';
@@ -27,7 +28,9 @@ const DEFAULT_DEEPSEEK_HOST = 'https://api.deepseek.com';
 const DEFAULT_GROQ_HOST = 'https://api.groq.com/openai';
 const DEFAULT_LMSTUDIO_HOST = 'http://localhost:1234';
 const DEFAULT_LOCALAI_HOST = 'http://127.0.0.1:8080';
+const DEFAULT_METAAI_HOST = 'https://api.meta.ai'; // Meta AI (the Meta Model API) - Responses, Chat Completions and Messages under /v1
 const DEFAULT_MISTRAL_HOST = 'https://api.mistral.ai';
+const DEFAULT_MODULAR_HOST = 'https://api.modular.com'; // Modular Cloud - host is user-overridable to point at a self-hosted MAX server
 const DEFAULT_MOONSHOT_HOST = 'https://api.moonshot.ai';
 const DEFAULT_MOONSHOT_CODING_HOST = 'https://api.kimi.com/coding'; // Kimi Code subscription ('sk-kimi-' keys)
 const DEFAULT_NVIDIANIM_HOST = 'https://integrate.api.nvidia.com'; // NVIDIA API Catalog (build.nvidia.com) - host is user-overridable to point at a local NIM/vLLM
@@ -93,7 +96,7 @@ export type OpenAIAccessSchema = z.infer<typeof openAIAccessSchema>;
 export const openAIAccessSchema = z.object({
   dialect: z.enum([
     'alibaba', 'azure', 'cerebras', 'cohere', 'deepseek', 'groq', 'lmstudio',
-    'localai', 'mistral', 'moonshot', 'nvidianim', 'openai',
+    'localai', 'metaai', 'mistral', 'modular', 'moonshot', 'nvidianim', 'openai',
     'openrouter', 'perplexity', 'sakanaai', 'togetherai', 'xai', 'zai',
   ]),
   clientSideFetch: z.boolean().optional(), // optional: backward compatibility from newer server version - can remove once all clients are updated
@@ -228,6 +231,27 @@ export function openAIAccess(access: OpenAIAccessSchema, modelRefId: string | nu
         url: localAIHost + apiPath,
       };
 
+    case 'metaai':
+      // [Meta AI, 2026-09-02] Meta Model API (api.meta.ai): Muse models over the OpenAI Responses API (Chat Completions and
+      // Anthropic Messages are also served, but only Responses carries reasoning across turns) - https://dev.meta.ai/docs/api-reference
+      // Bearer key; served keys are 'LLM_<digits>_<secret>' (the docs print 'LLM|...'). Unknown top-level request params 400.
+      let metaaiKey = access.oaiKey || env.METAAI_API_KEY || '';
+      const metaaiHost = llmsFixupHost(access.oaiHost || env.METAAI_API_HOST || DEFAULT_METAAI_HOST, apiPath);
+
+      // Use function to select a random key if multiple keys are provided
+      metaaiKey = llmsRandomKeyFromMultiKey(metaaiKey);
+
+      if (!metaaiKey || !metaaiHost)
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'Missing Meta AI API Key or Host. Add it on the UI (Models Setup) or server side (your deployment).' });
+
+      return {
+        headers: {
+          'Authorization': `Bearer ${metaaiKey}`,
+          'Content-Type': 'application/json',
+        },
+        url: metaaiHost + apiPath,
+      };
+
     case 'mistral':
       // https://docs.mistral.ai/platform/client
       let mistralKey = access.oaiKey || env.MISTRAL_API_KEY || '';
@@ -243,6 +267,28 @@ export function openAIAccess(access: OpenAIAccessSchema, modelRefId: string | nu
           'Authorization': `Bearer ${mistralKey}`,
         },
         url: mistralHost + apiPath,
+      };
+
+    case 'modular':
+      // [Modular, 2026-08-13] Modular Cloud (api.modular.com), OpenAI-compatible shared endpoints.
+      // Host is user-overridable to target a self-hosted MAX server (same wire protocol, any model).
+      let modularKey = access.oaiKey || env.MODULAR_API_KEY || '';
+      const modularHost = llmsFixupHost(access.oaiHost || DEFAULT_MODULAR_HOST, apiPath);
+
+      // Use function to select a random key if multiple keys are provided
+      modularKey = llmsRandomKeyFromMultiKey(modularKey);
+
+      // NOTE: no key check - the cloud host requires an 'sk-mod-' key, but self-hosted MAX servers run keyless
+      if (!modularHost)
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'Missing Modular API Host. Add it on the UI (Models Setup) or server side (your deployment).' });
+
+      return {
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          ...(modularKey && { 'Authorization': `Bearer ${modularKey}` }),
+        },
+        url: modularHost + apiPath,
       };
 
     case 'moonshot':
@@ -360,8 +406,14 @@ export function openAIAccess(access: OpenAIAccessSchema, modelRefId: string | nu
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${orKey}`,
+          // App attribution (openrouter.ai/docs/app-attribution): drives our app page, rankings and
+          // marketplace category. Set here rather than centrally because these must ride the CSF
+          // (browser) path too - OpenRouter allowlists all four names for CORS, so they preflight fine.
+          // 'X-Title' is the legacy name of 'X-OpenRouter-Title'; both are sent for compatibility.
           'HTTP-Referer': BaseProduct.ProductURL,
           'X-Title': BaseProduct.ProductName,
+          'X-OpenRouter-Title': BaseProduct.ProductName,
+          'X-OpenRouter-Categories': 'general-chat,personal-agent', // max 2/request, from their fixed vocabulary
         },
         url: orHost + apiPath,
       };
@@ -384,6 +436,10 @@ export function openAIAccess(access: OpenAIAccessSchema, modelRefId: string | nu
           'Content-Type': 'application/json',
           'Accept': 'application/json',
           'Authorization': `Bearer ${perplexityKey}`,
+          // the pair Perplexity's own SDKs send (undocumented; both are on their CORS allowlist, so
+          // they also ride the CSF path). Consumption unverified - identity only.
+          'X-Source': BaseProduct.ProductName,
+          'X-Title': BaseProduct.ProductName,
         },
         url: perplexityHost + apiPath,
       };

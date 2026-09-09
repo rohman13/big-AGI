@@ -8,10 +8,12 @@ import { openRouterModelFamilySortFn, openRouterModelToModelDescription } from '
 // [Nous Research, 2026-08-10] Nous Portal - subscription inference gateway at inference-api.nousresearch.com.
 // Its /v1/models is OpenRouter's wire schema (most of the catalog is the OpenRouter catalog resold at a
 // subscriber discount, response ids are OpenRouter 'gen-...'), plus Nous' own Hermes models and a set of
-// models routed to partner backends. We reuse the OpenRouter mapper for names/pricing/context/interfaces,
-// with three Nous-specific corrections (probe-verified 2026-08-10):
+// models routed to partner backends. The Nous namespace is hermes-4-70b/405b only - the other open weights
+// (Hermes 4 14B, Hermes 4.3 36B, NousCoder-14B, nomos-1) are not served here. We reuse the OpenRouter mapper
+// for names/pricing/context/interfaces, with three Nous-specific corrections (probe-verified 2026-08-10,
+// re-verified 2026-08-17):
 // - ~31 embedding models are listed inline (OpenRouter's own list has none) - filtered out
-// - direct-routed entries (claude-*, gpt-5.6-sol, glm-5.2, muse-spark-1.1, ...) omit fields the OpenRouter
+// - direct-routed entries (claude-*, gpt-5.6-sol, muse-spark-1.1, ...) omit fields the OpenRouter
 //   zod schema requires (empty architecture/top_provider, no per_request_limits) - normalized, or the
 //   flagship chat models would be silently dropped
 // - requests go out on the plain 'openai' dialect, so OpenRouter-tunneled parameterSpecs are dead controls
@@ -54,10 +56,10 @@ function _nousNormalizeWireModel(wireModel: any): any {
   };
 }
 
-// parameterSpecs that only the 'openrouter' dialect can emit (plugins, tunneled Anthropic thinking /
-// Gemini efforts, Responses-only reasoning mode) - dead or throwing under the 'openai' dialect
+// parameterSpecs that only the 'openrouter' dialect can emit - dead or throwing under the 'openai' dialect: every
+// OpenRouter-own parameter (the 'llmVndOrt' prefix, filtered below) plus the tunneled Anthropic thinking / Gemini
+// efforts and the Responses-only reasoning mode
 const _nousDroppedParamIds: string[] = [
-  'llmVndOrtWebSearch',
   'llmVndAntThinkingBudget',
   'llmVndAntEffort',
   'llmVndGemEffort',
@@ -70,7 +72,7 @@ const _nousDroppedParamIds: string[] = [
 /** Adapt an OpenRouter-mapped description to the plain 'openai' request dialect. */
 function _nousAdaptToOpenAIDialect(model: ModelDescriptionSchema): ModelDescriptionSchema {
 
-  let parameterSpecs = model.parameterSpecs?.filter(p => !_nousDroppedParamIds.includes(p.paramId));
+  let parameterSpecs = model.parameterSpecs?.filter(p => !p.paramId.startsWith('llmVndOrt') && !_nousDroppedParamIds.includes(p.paramId));
 
   // Hermes runs on Nous' own vLLM backend, which ignores `reasoning_effort` (probe-verified: 'high'
   // and 'none' both no-op) - drop the effort control there; hybrid reasoning stays prompt-triggered.

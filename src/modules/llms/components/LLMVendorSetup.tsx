@@ -18,7 +18,9 @@ import { GeminiServiceSetup } from '../vendors/gemini/GeminiServiceSetup';
 import { GroqServiceSetup } from '../vendors/groq/GroqServiceSetup';
 import { LMStudioServiceSetup } from '../vendors/lmstudio/LMStudioServiceSetup';
 import { LocalAIServiceSetup } from '../vendors/localai/LocalAIServiceSetup';
+import { MetaAIServiceSetup } from '../vendors/metaai/MetaAIServiceSetup';
 import { MistralServiceSetup } from '../vendors/mistral/MistralServiceSetup';
+import { ModularServiceSetup } from '../vendors/modular/ModularServiceSetup';
 import { MoonshotServiceSetup } from '../vendors/moonshot/MoonshotServiceSetup';
 import { NvidiaNIMServiceSetup } from '../vendors/nvidianim/NvidiaNIMServiceSetup';
 import { OllamaServiceSetup } from '../vendors/ollama/OllamaServiceSetup';
@@ -48,7 +50,9 @@ const vendorSetupComponents: Record<ModelVendorId, React.ComponentType<{ service
   groq: GroqServiceSetup,
   lmstudio: LMStudioServiceSetup,
   localai: LocalAIServiceSetup,
+  metaai: MetaAIServiceSetup,
   mistral: MistralServiceSetup,
+  modular: ModularServiceSetup,
   moonshot: MoonshotServiceSetup,
   nvidianim: NvidiaNIMServiceSetup,
   ollama: OllamaServiceSetup,
@@ -63,9 +67,8 @@ const vendorSetupComponents: Record<ModelVendorId, React.ComponentType<{ service
 
 
 /**
- * Vendor -> big-agi.com/docs setup page. Written out because five ids differ from their slug
- * (googleai, moonshot, nvidianim, sakanaai, togetherai); Record<ModelVendorId, ...> is exhaustive,
- * so a new vendor cannot be registered without a docs slug (build-checked via SiteDocSlug).
+ * Vendor -> big-agi.com/docs setup page. Written out because some ids differ from their slug
+ * Record<ModelVendorId, ...> is exhaustive so a new vendor cannot be registered without a docs slug (build-checked via SiteDocSlug).
  */
 export const VENDOR_DOCS: Record<ModelVendorId, SiteDocSlug> = {
   alibaba: 'connect-alibaba',
@@ -79,7 +82,9 @@ export const VENDOR_DOCS: Record<ModelVendorId, SiteDocSlug> = {
   groq: 'connect-groq',
   lmstudio: 'connect-lmstudio',
   localai: 'connect-localai',
+  metaai: 'connect-meta',
   mistral: 'connect-mistral',
+  modular: 'connect-modular',
   moonshot: 'connect-moonshot-ai',
   nvidianim: 'connect-nvidia-nim',
   ollama: 'connect-ollama',

@@ -2,6 +2,8 @@ import { createEmptyReadableStream, safeErrorString } from '~/server/wire';
 import { fetchResponseOrTRPCThrow } from '~/server/trpc/trpc.router.fetchers';
 import { fetchWithAbortableConnectionRetry, RetryAttempt } from '~/server/trpc/trpc.fetchers.retrier';
 
+import { llmAppIdentityHeaders } from '~/modules/llms/shared/llm.appIdentity';
+
 import { objectDeepCloneWithStringLimit } from '~/common/util/objectUtils';
 
 import { AIX_SECURITY_ONLY_IN_DEV_BUILDS } from '../../api/aix.security';
@@ -51,6 +53,8 @@ export async function* executeChatGenerateDispatch(
   let dispatch: ChatGenerateDispatch;
   try {
     dispatch = await dispatchCreatorFn();
+    // attach outbound app identity, for every dialect (no-op in the browser)
+    dispatch.request.headers = llmAppIdentityHeaders(dispatch.request.headers);
   } catch (error: any) {
     // log but don't warn on the server console, this is typically a service configuration issue (e.g. a missing password will throw here)
     chatGenerateTx.setDispatchRpcTerminatingIssue('dispatch-prepare', `**[AIX Configuration Issue] ${_d.prettyDialect}**: ${safeErrorString(error) || 'Unknown service preparation error'}`, 'srv-log');
@@ -336,6 +340,9 @@ async function* _consumeDispatchStream(
 
       // ignore events post termination
       if (chatGenerateTx.isEnded) {
+        // the SSE '[DONE]' sentinel after the terminal event is not a protocol issue ([Meta AI] Responses closes every stream with it)
+        if (demuxedItem.type === 'event' && demuxedItem.data === '[DONE]')
+          break; // inner for {}, will break outer
         // DEV-only message to fix dispatch protocol parsing -- warning on, because this is important and a sign of a bug
         console.warn(`[AIX] _consumeDispatchStream: ${_d.prettyDialect}: received stream event after termination. ignoring.`, demuxedItem);
         break; // inner for {}, will break outer
