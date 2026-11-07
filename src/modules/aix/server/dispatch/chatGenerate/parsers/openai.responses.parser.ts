@@ -4,15 +4,16 @@ import { hasKeys } from '~/common/util/objectUtils';
 import { usdToCents } from '~/common/util/costUtils';
 
 import type { AixWire_Particles, AixWire_Vendors } from '../../../api/aix.wiretypes';
-import type { ChatGenerateParseFunction } from '../chatGenerate.dispatch';
+import type { ChatGenerateParseContext, ChatGenerateParseFunction } from '../chatGenerate.dispatch';
 import type { IParticleTransmitter } from './IParticleTransmitter';
 import { AIX_OAI_DEFAULT_IMAGE_GEN_MODEL } from '../adapters/openai.responsesCreate';
 import { IssueSymbols } from '../ChatGenerateTransmitter';
 import { aixResilientUnknownValue } from '../../../api/aix.resilience';
-import { openAIUpstreamErrorLogLevel } from './openai.error-severity';
+import { openAITransientErrorToHttpStatus, openAIUpstreamErrorLogLevel } from './openai.error-severity';
 import { stripXAIDefectiveCitations, XAIDefectiveCitationsFilter } from './xai.transform-citationsLeak';
 
 import { OpenAIWire_API_Responses, OpenAIWire_Responses_Tools } from '../../wiretypes/openai.wiretypes';
+import { OperationRetrySignal } from '../chatGenerate.operation-retry';
 
 
 // configuration
@@ -83,11 +84,16 @@ function _findImageGenToolCfg(tools: TResponse['tools']): TImageGenToolCfg | und
  * parser needs no such check, as it emits content from this same .output.
  * Empirical 2026-07-03 (5/5 GPT-5.5 Pro + web_search repros); same upstream behavior independently hit by
  * vercel/ai#6534 and openai/codex#10055.
+ *
+ * Only the LAST output item counts (#1208): a message that completed and was then followed by more items (a
+ * hosted code_interpreter_call, a function_call, ...) is an intermediate step, not the answer - the failure cut
+ * the turn short, and salvaging it rendered a truncated reply as a clean success with no usage and no error.
  */
 function _isSalvageableFailedOutput(output: TResponse['output']): boolean {
-  return OPENAI_RESPONSES_SALVAGE_FAILED && output.some(item => item.type === 'message' && item.status === 'completed');
+  if (!OPENAI_RESPONSES_SALVAGE_FAILED || !output.length) return false;
+  const lastItem = output[output.length - 1];
+  return lastItem.type === 'message' && lastItem.status === 'completed';
 }
-
 
 /**
  * We need this just to ensure events are not out of order, as out streaming is progressive
@@ -336,7 +342,7 @@ export function createOpenAIResponsesEventParser(rspVendor: AixWire_Vendors.RspV
   // [xAI] grok-4.6 leaks internal citation directives into web_search answer text - strip them (see xai.transform-citationsLeak.ts)
   const xaiCitationsFilter = rspVendor === 'xai' ? new XAIDefectiveCitationsFilter() : undefined;
 
-  return function(pt: IParticleTransmitter, eventData: string) {
+  return function(pt: IParticleTransmitter, eventData: string, _eventName?: string, context?: ChatGenerateParseContext) {
 
     // throws on malformed event data
     const chunkData = JSON.parse(eventData);
@@ -440,31 +446,35 @@ export function createOpenAIResponsesEventParser(rspVendor: AixWire_Vendors.RspV
           break;
         }
 
-        // Genuine failure: surface the error
+        const failedText = !failedError ? 'Response failed with no error details.'
+          : `${safeErrorString(failedError.code) || 'Error'}: ${safeErrorString(failedError.message) || 'unknown.'}`;
+
+        // Genuine failure: retry if transient (the deferred mid-stream 'error' lands here when the message didn't complete), else surface the error
+        const failedRetryHttpStatus = openAITransientErrorToHttpStatus(failedError);
+        if (failedRetryHttpStatus && context?.hasRetriesForHttpStatus(failedRetryHttpStatus, failedError?.code))
+          throw new OperationRetrySignal(failedText, { causeHttp: failedRetryHttpStatus, causeConn: failedError?.code });
+
         pt.setTokenStopReason('cg-issue');
-        pt.setDialectTerminatingIssue(!failedError ? 'Response failed with no error details.'
-          : `${safeErrorString(failedError.code) || 'Error'}: ${safeErrorString(failedError.message) || 'unknown.'}`, IssueSymbols.Generic, openAIUpstreamErrorLogLevel(failedError));
+        pt.setDialectTerminatingIssue(failedText, IssueSymbols.Generic, openAIUpstreamErrorLogLevel(failedError));
         break;
       }
 
       case 'response.incomplete':
-        // TODO: We haven't seen one of those events yet; we need to see what happens and parse it!
         R.setResponse(eventType, event.response);
         R.markResponseSealed();
 
         // -> Metrics: timing always, tokens when the usage block carries them (#1149)
         pt.updateMetrics(_fromResponseMetrics(event.response, R.parserCreationTimestamp, R.timeToFirstEvent));
 
-        // -> Status: handle incomplete response
-        if (event.response.incomplete_details?.reason === 'max_output_tokens')
+        // -> Status: the reason decides how the client renders the cut (#1208: never as a clean finish)
+        const incompleteReason = event.response.incomplete_details?.reason;
+        if (incompleteReason === 'max_output_tokens')
           pt.setTokenStopReason('out-of-tokens');
-        else
-          pt.setTokenStopReason(R.hasFunctionCalls ? 'ok-tool_invocations' : 'ok');
-
-        // NOTE: disable notification for now, but server-side log it to detect more stop reasons
-        if (event.response.incomplete_details?.reason !== 'max_output_tokens') {
-          // pt.appendText(`**Incomplete response**: the response was incomplete because ${event.response.incomplete_details.reason || 'unknown reason'}\n`);
-          console.warn('[DEV] AIX: FIXME: OpenAI-Response Incomplete:', { incomplete_details: event.response.incomplete_details });
+        else if (incompleteReason === 'content_filter')
+          pt.setTokenStopReason('filter-content');
+        else {
+          pt.setTokenStopReason('cg-issue');
+          pt.setDialectTerminatingIssue(`Incomplete response${incompleteReason ? `: ${safeErrorString(incompleteReason)}` : ''}.`, IssueSymbols.Generic, 'srv-warn');
         }
         break;
 
@@ -833,8 +843,13 @@ export function createOpenAIResponsesEventParser(rspVendor: AixWire_Vendors.RspV
           break;
         }
 
+        // Transient and retries left: unwind to the operation retrier (#1210)
+        const retryHttpStatus = openAITransientErrorToHttpStatus(event.error ?? event);
+        const retryUpstreamCode = [event.error?.code, event.code].find((c): c is string => typeof c === 'string'); // the machine code (errorText leads with the type, as OpenAI's own messages do)
+        if (retryHttpStatus && context?.hasRetriesForHttpStatus(retryHttpStatus, retryUpstreamCode))
+          throw new OperationRetrySignal(errorText, { causeHttp: retryHttpStatus, causeConn: retryUpstreamCode ?? errorCode });
+
         // Nothing to salvage - fail now (and seal, so the trailing 'response.failed' echo doesn't re-report)
-        // FIXME: potential point for throwing OperationRetrySignal
         R.markResponseSealed();
         pt.updateMetrics(_fromResponseMetrics(undefined, R.parserCreationTimestamp, R.timeToFirstEvent)); // timing even on failure (#1149)
         pt.setTokenStopReason('cg-issue');
@@ -887,13 +902,13 @@ export function createOpenAIResponseParserNS(rspVendor: AixWire_Vendors.RspVendo
 
   const parserCreationTimestamp = Date.now();
 
-  return function(pt: IParticleTransmitter, eventData: string) {
+  return function(pt: IParticleTransmitter, eventData: string, _eventName?: string, context?: ChatGenerateParseContext) {
 
     // Throws on malformed event data
     const responseData = JSON.parse(eventData);
 
     // .error: transmits upstream errors pre-parsing (object wouldn't be valid)
-    if (_forwardResponseError(responseData, pt)) {
+    if (_forwardResponseErrorNS(responseData, pt, context)) {
       pt.updateMetrics({ dtAll: Date.now() - parserCreationTimestamp }); // timing even on failure (#1149)
       return;
     }
@@ -933,9 +948,13 @@ export function createOpenAIResponseParserNS(rspVendor: AixWire_Vendors.RspVendo
         // pedantic check (.incomplete_details)
         if (response.incomplete_details && typeof response.incomplete_details === 'object') {
 
-          // override stop reason for max_output_tokens
+          // override the stop reason: out of tokens, filtered, else a generic issue (#1208: never a clean finish)
           if (response.incomplete_details.reason === 'max_output_tokens')
             tokenStopReason = 'out-of-tokens';
+          else if (response.incomplete_details.reason === 'content_filter')
+            tokenStopReason = 'filter-content';
+          else
+            tokenStopReason = 'cg-issue';
 
           // append the incomplete details as text
           pt.appendText(`**Incomplete response**: the response was incomplete because ${response.incomplete_details?.reason || 'unknown reason'}\n`);
@@ -973,9 +992,6 @@ export function createOpenAIResponseParserNS(rspVendor: AixWire_Vendors.RspVendo
         aixResilientUnknownValue('OpenAI-Responses-NS', 'responseStatus', { status: response.status });
         break;
     }
-
-    // Set the determined stop reason
-    pt.setTokenStopReason(tokenStopReason);
 
     // -> Output[]
     for (const oItem of response.output) {
@@ -1153,6 +1169,9 @@ export function createOpenAIResponseParserNS(rspVendor: AixWire_Vendors.RspVendo
 
     } // .output[]
 
+    // Set the determined stop reason - after the output, which can still fail to parse
+    pt.setTokenStopReason(tokenStopReason);
+
     // -> Status
     // .status: check for the status
     // if (response.status !== 'completed')
@@ -1162,7 +1181,7 @@ export function createOpenAIResponseParserNS(rspVendor: AixWire_Vendors.RspVendo
 }
 
 
-function _fromResponseMetrics(response: Pick<OpenAIWire_API_Responses.Response, 'usage' | 'service_tier' | 'tool_usage'> | undefined, parserCreationTimestamp: number, timeToFirstEvent: number | undefined): AixWire_Particles.CGSelectMetrics {
+function _fromResponseMetrics(response: Pick<OpenAIWire_API_Responses.Response, 'model' | 'usage' | 'service_tier' | 'tool_usage' | 'output'> | undefined, parserCreationTimestamp: number, timeToFirstEvent: number | undefined): AixWire_Particles.CGSelectMetrics {
   const usage = response?.usage;
 
   // Time Metrics - measured locally (parser-creation -> now), independent of the upstream `usage` block.
@@ -1175,6 +1194,12 @@ function _fromResponseMetrics(response: Pick<OpenAIWire_API_Responses.Response, 
   };
   if (timeToFirstEvent !== undefined)
     metricsUpdate.dtStart = timeToFirstEvent;
+
+  // Code executions: one code_interpreter_call item per sandbox run (OpenAI and xAI). OpenAI's usage carries no counter
+  // (containers bill per session, not per run), so count the terminal output - also when the event omits usage (#1231)
+  const nCodeExec = response?.output?.filter(item => item.type === 'code_interpreter_call').length ?? 0;
+  if (nCodeExec > 0)
+    metricsUpdate.nCodeExec = nCodeExec;
 
   // Token Metrics - only when the upstream usage block carries completion tokens
   if (usage?.output_tokens === undefined) {
@@ -1231,14 +1256,14 @@ function _fromResponseMetrics(response: Pick<OpenAIWire_API_Responses.Response, 
     metricsUpdate.$cReported = usdToCents(usage.cost_in_usd_ticks / 1e10);
 
   // served tier -> confirmed multiplier; unknown tiers stay on the parameter side
-  const $xPrice = _priceMultiplierFromServiceTier(response?.service_tier);
+  const $xPrice = _priceMultiplierFromServiceTier(response?.service_tier, response?.model);
   if ($xPrice !== undefined)
     metricsUpdate.$xPrice = $xPrice;
 
   return metricsUpdate;
 }
 
-function _priceMultiplierFromServiceTier(serviceTier: string | null | undefined): number | undefined {
+function _priceMultiplierFromServiceTier(serviceTier: string | null | undefined, modelId: string | undefined): number | undefined {
   switch (serviceTier) {
     case 'default':
       return 1;
@@ -1246,8 +1271,12 @@ function _priceMultiplierFromServiceTier(serviceTier: string | null | undefined)
       return 0.5;
     case 'priority':
     case 'fast':
-      return 2;
-    default: // 'auto', 'ultrafast' (gated, unpublished price), absent
+      // 2x on every model exposing llmVndOaiServiceTier, except GPT-5.5 at 2.5x (Fast $12.50/$75 vs Standard $5/$30)
+      return modelId?.startsWith('gpt-5.5') ? 2.5 : 2;
+    case 'ultrafast':
+      // [2026-09-29] 6x on every token class, both context tiers (GPT-6 Astra: $60/$6/$75/$300 vs Standard $10/$1/$12.50/$50)
+      return 6;
+    default: // 'auto', absent
       return undefined;
   }
 }
@@ -1255,7 +1284,7 @@ function _priceMultiplierFromServiceTier(serviceTier: string | null | undefined)
 /**
  * If there's an error in the pre-decoded message, push it down to the particle transmitter.
  */
-function _forwardResponseError(parsedData: any, pt: IParticleTransmitter) {
+function _forwardResponseErrorNS(parsedData: any, pt: IParticleTransmitter, context?: ChatGenerateParseContext) {
 
   // operate on .error
   if (!parsedData || !parsedData.error) return false;
@@ -1273,9 +1302,16 @@ function _forwardResponseError(parsedData: any, pt: IParticleTransmitter) {
   if (Array.isArray(parsedData.output) && _isSalvageableFailedOutput(parsedData.output))
     return false;
 
+  const errorText = safeErrorString(error) || 'unknown.';
+
+  // Transient and retries left: unwind to the operation retrier (#1210)
+  const retryHttpStatus = openAITransientErrorToHttpStatus(error);
+  const retryUpstreamCode = typeof error.code === 'string' ? error.code : undefined;
+  if (retryHttpStatus && context?.hasRetriesForHttpStatus(retryHttpStatus, retryUpstreamCode))
+    throw new OperationRetrySignal(errorText, { causeHttp: retryHttpStatus, causeConn: retryUpstreamCode });
+
   // Transmit the error as text - note: throw if you want to transmit as 'error'
-  // FIXME: potential point for throwing OperationRetrySignal
-  pt.setDialectTerminatingIssue(safeErrorString(error) || 'unknown.', IssueSymbols.Generic, openAIUpstreamErrorLogLevel(error));
+  pt.setDialectTerminatingIssue(errorText, IssueSymbols.Generic, openAIUpstreamErrorLogLevel(error));
   return true;
 }
 
@@ -1351,6 +1387,9 @@ function _imageGenerationMimeType(item: { output_format?: string, result?: strin
       return 'image/jpeg';
     case 'png':
       return 'image/png';
+    case undefined:
+      // no output_format: sniffed below
+      break;
   }
   const b64Head = item?.result?.slice(0, 5) ?? '';
   if (b64Head.startsWith('UklGR')) return 'image/webp'; // 'RIFF....WEBP'

@@ -39,11 +39,13 @@ The `gh` command is available to interact with GitHub from the terminal, but **N
 - Cloud/auth/sync code stays on `dev`; non-cloud improvements (UX, AIX, model support, bug fixes) can land on either branch
 
 **Branch workflow:**
-- `dev` is rebased on top of `main` (never merged) - `main` changes flow into `dev` on the next rebase, no manual forward-port needed
-- Never `git merge` between the two branches - breaks the linear topology
-- Backporting `dev` -> `main` is a re-implementation, never a cherry-pick - keep `main`-side edits minimal/additive so the existing `dev` version lands cleanly on rebase; split into small commits when natural
-- Rebasing `dev` onto `main`: work on a scratch branch (never `private/dev` directly); only files `main` changed since the merge-base can conflict - forecast with `git diff --name-only $(git merge-base private/dev opensource/main) opensource/main`
-- Resolve that rebase per-conflict: keep `dev` where it diverges, UNION where `main` only added (never blanket `-X theirs`/`-X ours` - they drop `main`'s additions). Check no `<<<<<<<` markers survive before each `--continue`
+- `dev` is rebased on top of `main`, never merged; never port `main` -> `dev` by hand
+- Backporting `dev` -> `main`: exact cherry-picks for self-contained commits (the rebase drops them by patch-id), minimal re-implementation for cloud-tainted ones. Land `dev` data that touches shared files (type unions, registry and editorial rows) on `main` early
+- Rebasing `dev` onto `main`: on a scratch branch in a worktree, moving `dev` to it only once verified; use the plain `git rebase <new-base> <branch>`, since `--onto <base> <merge-base>` dedups cherry-picked commits against the merge-base, not the new base, and replays them into conflicts. Trial runs with mechanical resolutions need `-c rerere.enabled=false`, or `rerere.autoupdate` records and replays them silently
+- Forecast: `git diff --name-only $(git merge-base private/dev opensource/main) opensource/main` lists the files that can conflict; `git log -G'<old symbol or signature>' opensource/main..private/dev` finds the `dev` commits that break without conflicting. Fix those at their origin commit (`edit` in `rebase -i`); later commits touching adjacent lines, or renaming the file, will stop too
+- Resolve at marker level, `dev`'s intent on `main`'s API; never blanket `-X theirs`/`-X ours` or whole-file takes. Before each `--continue`: no `<<<<<<<`, no old-signature call left. Typecheck a stop only against the same commit on the original `dev`; verify the tip with `git range-diff` and `npm run tscheck`
+- When `main` restructures code that `dev` kept changing (a block moved into a component, a hook reshaped), build the target `dev` tree first: `dev`'s tip plus the change in `dev`'s form. Then the gate is binary: the rebased tip equals it, with no fix-up commits after the last original one. Past a few dozen stops, hand resolution leaves drift (comments, deps, prop types); a script that derives each stop's file from the original commit, checked to reproduce `main`'s own commit and the target tree, does not. Afterwards compare every intermediate tree against the same derivation: that is what catches commits outside the edit set that changed a hook's test or a handler's signature
+- `dev` has commits that never typechecked, so a stop's gate is "no error the original commit did not have", with paths normalized. Commits whose content `main` now carries replay empty; drop them and list them. `git replay` writes refs by default on this git, pass `--ref-action=print` for forecasts
 
 ### Repository Layout
 
@@ -111,6 +113,7 @@ Local-first: Zustand in memory with `persist` to localStorage, except chats, whi
 
 ### Testing & Quality
 - Browser floor: `eslint.config.mjs` hard-bans ES2023 `toSorted/toReversed/toSpliced/with` and `new Intl.Segmenter` via `no-restricted-syntax` (they crash Chrome <110 / Win7-8 holdouts); a separate `compat/compat` pass checks Web APIs against `browserslist`. Use `[...x].sort()` etc.; don't lower `browserslist` to "fix" the banned syntax - that rule doesn't read it, and SWC won't polyfill prototype methods
+- Production builds minify with SWC, which miscompiles some code shapes; `tools/eslint/swc-miscompile.mjs` bans the known ones
 
 ### Debugging Storage Issues
 - Chats: DevTools -> Application -> IndexedDB -> `keyval-store` -> `keyval` -> key `app-chats`

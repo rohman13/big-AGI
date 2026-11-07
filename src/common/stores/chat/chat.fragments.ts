@@ -1,3 +1,4 @@
+import type { Immutable } from '~/common/types/immutable.types';
 import type { LiveFileId } from '~/common/livefile/liveFile.types';
 import { agiId } from '~/common/util/idUtils';
 import { ellipsizeMiddle, humanReadableHyphenated } from '~/common/util/textUtils';
@@ -58,11 +59,12 @@ export type DMessageAttachmentFragment = _DMessageFragmentWrapper<'attachment',
 };
 
 /**
- * Void Fragments: no meaning, pure cosmetic, not stored, not processed
+ * Void Fragments: reasoning, annotations and UI placeholders outside ordinary content.
+ * Reasoning is stored and can be replayed to providers; transient placeholders are removed on completion.
  */
 export type DMessageVoidFragment = _DMessageFragmentWrapper<'void',
   | DVoidModelAnnotationsPart     // (non submitted) model references, citations, etc.
-  | DVoidModelAuxPart             // (non submitted) model auxiliary information, from the model itself
+  | DVoidModelAuxPart             // model reasoning and continuity data; replay depends on the provider
   | DVoidPlaceholderPart          // (non submitted) placeholder to be replaced by another part
   | _SentinelPart
 >;
@@ -89,7 +91,11 @@ type _DMessageFragmentWrapper<TFragment, TPart extends { pt: string }> = {
   ft: TFragment;
   fId: DMessageFragmentId;
   part: TPart;
-  originId?: string;                  // optional, for multi-model, identifies which actor produced this fragment
+  originId?:
+    | 'cha-per-re-um-pre' | 'cha-per-re-um-post' // see DPersona.appChat.DPersonaChatReinforcement
+    | 'cha-live-feed-frame' // camera/screen frame attachments, see sampleLiveFeedsAsFragments
+    | 'cha-live-feed-state' // the live feeds' vision state text appended to the user message, not the prompt
+    | (string & {}); // optional, for multi-model, identifies which actor produced this fragment
   vendorState?: DMessageFragmentVendorState; // optional vendor-specific protocol state (opaque, lossy-safe)
 }
 
@@ -292,6 +298,7 @@ type DVoidModelAnnotationsPart = {
 export type DVoidWebCitation = {
   type: 'citation',
   url: string,
+  vndGemVertexUrl?: string, // the Gemini grounding redirect that url replaced once resolved, kept for a faithful replay
   title: string,
   refNumber?: number,
   pubTs?: number, // publication timestamp
@@ -318,6 +325,8 @@ export type DVoidPlaceholderPart = {
   pType?:
     | 'chat-gen-follow-up'   // a follow-up is being generated
     | 'notice',              // neutral dismissible notice (e.g. earlier reasoning dropped): survives generation, deleted by the user
+  pNoticeKind?: 'input-transform' | 'hres-discarded' | 'flow-cont' | 'no-stop-reason' | 'late-issue', // for 'notice': the AIX notice type it came from, for per-kind UI policy (e.g. input-transform yields to errors, flow-cont renders as a divider, no-stop-reason: clean end without a finish reason, completeness unknown, late-issue: an issue after the vendor's stop reason)
+  pNoticeLevel?: 'warn', // for 'notice': the sender judged it unexpected (e.g. a reasoning reset inside a paused turn); absent = informational
 
   // operation history for stacked progress UI
   opLog?: readonly DVoidPlaceholderMOp[],
@@ -347,6 +356,7 @@ type DVoidPlaceholderAixControlRetry = {
   rStrat?: 'cli-ll-reconnect' | 'cli-ll-resume',  // strategy for cli-ll scope (reconnect: new request, resume: continue from handle)
   rCauseHttp?: number,  // HTTP status code if available (e.g., 429, 503, 502)
   rCauseConn?: string,  // connection error type if available (e.g., 'net-disconnected', 'timeout')
+  rCalm?: true,  // the retry profile marks the condition as expected (e.g. a busy best-effort tier): render without alarm
 };
 
 
@@ -427,6 +437,11 @@ export function isDocPart(part: DMessageContentFragment['part'] | DMessageAttach
 
 export function isImageRefPart(part: DMessageContentFragment['part'] | DMessageAttachmentFragment['part']) {
   return part.pt === 'image_ref';
+}
+
+/** An image of either generation: a legacy image ref, or a zync asset reference to an image. */
+export function isImagePart(part: DMessageContentFragment['part'] | DMessageAttachmentFragment['part']): boolean {
+  return isImageRefPart(part) || isZyncAssetImageReferencePart(part);
 }
 
 export function isTextPart(part: DMessageContentFragment['part']) {
@@ -585,8 +600,8 @@ export function createModelAuxVoidFragment(aType: DVoidModelAuxPart['aType'], aT
   return _createVoidFragment(_create_ModelAux_Part(aType, aText, textSignature, redactedData));
 }
 
-export function createPlaceholderVoidFragment(placeholderText: string, placeholderType?: DVoidPlaceholderPart['pType'], aixControl?: DVoidPlaceholderPart['aixControl'], opLog?: readonly DVoidPlaceholderMOp[], pDetail?: string): DMessageVoidFragment {
-  return _createVoidFragment(_create_Placeholder_Part(placeholderText, placeholderType, aixControl, opLog, pDetail));
+export function createPlaceholderVoidFragment(placeholderText: string, placeholderType?: DVoidPlaceholderPart['pType'], aixControl?: DVoidPlaceholderPart['aixControl'], opLog?: readonly DVoidPlaceholderMOp[], pDetail?: string, pNoticeKind?: DVoidPlaceholderPart['pNoticeKind'], pNoticeLevel?: DVoidPlaceholderPart['pNoticeLevel']): DMessageVoidFragment {
+  return _createVoidFragment(_create_Placeholder_Part(placeholderText, placeholderType, aixControl, opLog, pDetail, pNoticeKind, pNoticeLevel));
 }
 
 function _createVoidFragment(part: DMessageVoidFragment['part']): DMessageVoidFragment {
@@ -601,7 +616,7 @@ function _createSentinelFragment(): _SentinelFragment {
 }
 
 
-export function duplicateDMessageFragments(fragments: Readonly<DMessageFragment[]>, skipVoid: boolean): DMessageFragment[] {
+export function duplicateDMessageFragments(fragments: Immutable<DMessageFragment[]>, skipVoid: boolean): DMessageFragment[] {
   return !skipVoid ? fragments.map(_duplicateFragment)
     : fragments.map(_duplicateFragment).filter(f => f.ft !== 'void');
 }
@@ -611,7 +626,7 @@ export function duplicateDMessageFragments(fragments: Readonly<DMessageFragment[
  * - Preserved: originId, vendorState, mutability
  * - Cleared: fId (new ID), identity (per spec: "removed on duplication (new edit)")
  */
-function _duplicateFragment(fragment: DMessageFragment): DMessageFragment {
+function _duplicateFragment(fragment: Immutable<DMessageFragment>): DMessageFragment {
   switch (fragment.ft) {
     case 'content':
       return _carryMeta(fragment, _createContentFragment(_duplicate_Part(fragment.part)));
@@ -717,15 +732,15 @@ function _create_ModelAux_Part(aType: DVoidModelAuxPart['aType'], aText: string,
   };
 }
 
-function _create_Placeholder_Part(placeholderText: string, pType?: DVoidPlaceholderPart['pType'], aixControl?: DVoidPlaceholderPart['aixControl'], opLog?: readonly DVoidPlaceholderMOp[], pDetail?: string): DVoidPlaceholderPart {
-  return { pt: 'ph', pText: placeholderText, ...(pDetail ? { pDetail } : undefined), ...(pType ? { pType } : undefined), ...(opLog ? { opLog: opLog.map(e => ({ ...e })) } : undefined), ...(aixControl ? { aixControl: { ...aixControl } } : undefined) };
+function _create_Placeholder_Part(placeholderText: string, pType?: DVoidPlaceholderPart['pType'], aixControl?: DVoidPlaceholderPart['aixControl'], opLog?: readonly DVoidPlaceholderMOp[], pDetail?: string, pNoticeKind?: DVoidPlaceholderPart['pNoticeKind'], pNoticeLevel?: DVoidPlaceholderPart['pNoticeLevel']): DVoidPlaceholderPart {
+  return { pt: 'ph', pText: placeholderText, ...(pDetail ? { pDetail } : undefined), ...(pType ? { pType } : undefined), ...(pNoticeKind ? { pNoticeKind } : undefined), ...(pNoticeLevel ? { pNoticeLevel } : undefined), ...(opLog ? { opLog: opLog.map(e => ({ ...e })) } : undefined), ...(aixControl ? { aixControl: { ...aixControl } } : undefined) };
 }
 
 function _create_Sentinel_Part(): _SentinelPart {
   return { pt: '_pt_sentinel' };
 }
 
-function _duplicate_Part<TPart extends (DMessageContentFragment | DMessageAttachmentFragment | DMessageVoidFragment)['part']>(part: TPart): TPart {
+function _duplicate_Part<TPart extends (DMessageContentFragment | DMessageAttachmentFragment | DMessageVoidFragment)['part']>(part: Immutable<TPart>): TPart {
   const pt = part.pt;
   switch (pt) {
     case 'doc':
@@ -773,7 +788,7 @@ function _duplicate_Part<TPart extends (DMessageContentFragment | DMessageAttach
       return _create_ModelAux_Part(part.aType, part.aText, part.textSignature, part.redactedData) as TPart;
 
     case 'ph':
-      return _create_Placeholder_Part(part.pText, part.pType, part.aixControl, part.opLog, part.pDetail) as TPart;
+      return _create_Placeholder_Part(part.pText, part.pType, part.aixControl, part.opLog, part.pDetail, part.pNoticeKind, part.pNoticeLevel) as TPart;
 
     case 'text':
       return _create_Text_Part(part.text) as TPart;
@@ -825,7 +840,7 @@ export function createDMessageDataInlineText(text: string, mimeType?: string): D
   return { idt: 'text', text, mimeType };
 }
 
-function _duplicate_InlineData(data: DMessageDataInline): DMessageDataInline {
+function _duplicate_InlineData(data: Immutable<DMessageDataInline>): DMessageDataInline {
   switch (data.idt) {
     case 'text':
       return createDMessageDataInlineText(data.text, data.mimeType);
@@ -843,7 +858,7 @@ function _createDMessageDataRefUrl(url: string): Extract<DMessageDataRef, { reft
   return { reftype: 'url', url };
 }
 
-function _duplicate_DataReference(ref: DMessageDataRef): DMessageDataRef {
+function _duplicate_DataReference(ref: Immutable<DMessageDataRef>): DMessageDataRef {
   switch (ref.reftype) {
     case 'dblob':
       return createDMessageDataRefDBlob(ref.dblobAssetId, ref.mimeType, ref.bytesSize);
@@ -872,8 +887,22 @@ export function fragmentsSetOriginId(fragments: ReadonlyArray<Readonly<DMessageF
   return fragments.map(fragment => ({ ...fragment, originId: originId }));
 }
 
+/** True when no actor stamped an originId - in user messages, the fragments the user authored. */
+export function isUnstampedFragment(fragment: Immutable<DMessageFragment>): boolean {
+  return !('originId' in fragment && fragment.originId);
+}
+
+/** Moves only the listed fragments, into the slots they held; the rest keep theirs. A stale list changes nothing. */
+export function reorderFragmentsInSlots<T extends Pick<DMessageFragment, 'fId'>>(fragments: ReadonlyArray<T>, orderedIds: ReadonlyArray<DMessageFragmentId>): ReadonlyArray<T> {
+  const byId = new Map(fragments.map(fragment => [fragment.fId, fragment] as const));
+  const ordered = orderedIds.flatMap(id => byId.get(id) ?? []);
+  if (ordered.length !== orderedIds.length || new Set(orderedIds).size !== orderedIds.length) return fragments;
+  let next = 0;
+  return fragments.map(fragment => orderedIds.includes(fragment.fId) ? ordered[next++] : fragment);
+}
+
 export function splitFragmentsByType(fragments: DMessageFragment[]) {
-  // also see `useFragmentBuckets.ts` which inspired this function
+  // display grouping lives in cmRenderTree.build.ts
   return fragments.reduce((acc, frag) => {
     if (isContentFragment(frag))
       acc.contentFragments.push(frag);

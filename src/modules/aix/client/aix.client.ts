@@ -1,18 +1,21 @@
 import { findServiceAccessOrThrow } from '~/modules/llms/vendors/vendor.helpers';
 import { ortWebToolsToAixModel } from '~/modules/llms/vendors/openrouter/openrouter.webtools';
 
-import { vertexLinksAutoResolveFragments } from '~/modules/google/vertexai.client';
+import { vertexLinksResolveFragments } from '~/modules/google/vertexai.client';
 
+import type { Immutable } from '~/common/types/immutable.types';
 import type { MaybePromise } from '~/common/types/useful.types';
-import { AIVndAntInlineFilesPolicy, getVndAntInlineFiles } from '~/common/stores/store-ai';
+import { AIVndAntInlineFilesPolicy, getVndAntInlineFiles, getVndGeminiVertexLinks } from '~/common/stores/store-ai';
 import { AudioPlayer } from '~/common/util/audio/AudioPlayer';
 import { DLLM, DLLMId, LLM_IF_GEM_Interactions, LLM_IF_HOTFIX_NoTemperature, LLM_IF_OAI_Responses, LLM_IF_Outputs_Audio, LLM_IF_Outputs_Image, LLM_IF_Outputs_NoText } from '~/common/stores/llms/llms.types';
 import { DMessage, DMessageGenerator, createGeneratorAIX_AutoLabel } from '~/common/stores/chat/chat.message';
+import type { DMessageTerminalOutcome } from '~/common/stores/chat/chat.message.outcome';
 import { DMetricsChatGenerate_Lg, DMetricsChatGenerate_Md, metricsChatGenerateLgToMd, metricsComputeChatGenerateCostsMd, } from '~/common/stores/metrics/metrics.chatgenerate';
 import { DModelParameterValues, getAllModelParameterValues } from '~/common/stores/llms/llms.parameters';
 import { apiAsync, apiStream } from '~/common/util/trpc.client';
 import { createErrorContentFragment, DMessageContentFragment, DMessageErrorPart, DMessageVoidFragment, isContentFragment, isErrorPart } from '~/common/stores/chat/chat.fragments';
 import { findLLMOrThrow } from '~/common/stores/llms/store-llms';
+import type { AIVndOaiBeamSandboxPolicy } from '~/common/stores/store-ai';
 import { getAixInspectorEnabled } from '~/common/stores/store-ui';
 import { getLabsLosslessImages } from '~/common/stores/store-ux-labs';
 import { llmChatPricing_adjusted } from '~/common/stores/llms/llms.pricing';
@@ -76,7 +79,7 @@ export function aixCreateModelFromLLMOptions(
     llmVndAntEffort, llmVndGemEffort, llmVndOaiEffort, llmVndMiscEffort,
     llmVndAnt1MContext, llmVndAntCodeSandbox, llmVndAntInfSpeed, llmVndAntSkills, llmVndAntThinkingBudget, llmVndAntWebDynamic, llmVndAntWebFetch, llmVndAntWebFetchMaxUses, llmVndAntWebSearch, llmVndAntWebSearchMaxUses,
     llmVndBedrockAPI,
-    llmVndGeminiAgentViz, llmVndGeminiAspectRatio, llmVndGeminiImageSize, llmVndGeminiCodeExecution, llmVndGeminiComputerUse, llmVndGeminiGoogleSearch, llmVndGeminiMediaResolution, llmVndGeminiThinkingBudget,
+    llmVndGeminiAgentViz, llmVndGeminiAspectRatio, llmVndGeminiImageSize, llmVndGeminiCodeExecution, llmVndGeminiComputerUse, llmVndGeminiGoogleSearch, llmVndGeminiMediaResolution, llmVndGeminiThinkingBudget, llmVndGeminiUrlContext,
     // llmVndMoonshotWebSearch,
     llmVndOaiReasoningMode, llmVndOaiRestoreMarkdown, llmVndOaiServiceTier, llmVndOaiVerbosity, llmVndOaiWebSearchContext, llmVndOaiWebSearchGeolocation, llmVndOaiImageGeneration, llmVndOaiCodeInterpreter,
     llmVndOrtWebFetch, llmVndOrtWebSearch, llmVndOrtWebToolsAdvanced,
@@ -156,14 +159,11 @@ export function aixCreateModelFromLLMOptions(
     ...(llmVndGeminiAspectRatio ? { vndGeminiAspectRatio: llmVndGeminiAspectRatio } : {}),
     ...(llmVndGeminiCodeExecution === 'auto' ? { vndGeminiCodeExecution: llmVndGeminiCodeExecution } : {}),
     ...(llmVndGeminiComputerUse ? { vndGeminiComputerUse: llmVndGeminiComputerUse } : {}),
-    ...(llmVndGeminiGoogleSearch ? {
-      vndGeminiGoogleSearch: llmVndGeminiGoogleSearch,
-      vndGeminiUrlContext: 'auto', // NOTE: we are now driving both from the client side, search and fetch, without a dedicated setting, for UX simplicity
-    } : {}),
+    ...(llmVndGeminiGoogleSearch ? { vndGeminiGoogleSearch: llmVndGeminiGoogleSearch } : {}),
     ...(llmVndGeminiImageSize ? { vndGeminiImageSize: llmVndGeminiImageSize } : {}),
     ...(llmVndGeminiMediaResolution ? { vndGeminiMediaResolution: llmVndGeminiMediaResolution } : {}),
     ...(llmVndGeminiThinkingBudget !== undefined ? { vndGeminiThinkingBudget: llmVndGeminiThinkingBudget } : {}),
-    // ...(llmVndGeminiUrlContext === 'auto' ? { vndGeminiUrlContext: llmVndGeminiUrlContext } : {}),
+    ...(llmVndGeminiUrlContext === 'auto' ? { vndGeminiUrlContext: llmVndGeminiUrlContext } : {}),
 
     // Moonshot
     // ...(llmVndMoonshotWebSearch === 'auto' ? { vndMoonshotWebSearch: 'auto' } : {}),
@@ -234,12 +234,13 @@ interface AixClientOptions {
 
   // LLM parameter configuration layers: full replacement of user params and/or overrides of a set of individual params
   llmUserParametersReplacement?: DModelParameterValues; // can replace the 'global' llm user configuration with an alternate config (e.g. persona, or per-chat)
-  llmOptionsOverride?: Omit<DModelParameterValues, 'llmRef'>; // overrides (sets/replaces) individual LLM parameters
+  llmParamsWrite?: Omit<DModelParameterValues, 'llmRef'>; // overrides (sets/replaces) individual LLM parameters
 
   // -- Session State - extract? --
   // Cross-turn sandbox/container handles. Caller may pre-populate; resolver walks chat history to fill any unset slot.
   antContainerId?: string;            // [Anthropic Container] Container ID from a prior turn (caller checks expiry before setting)
   oaiContainerId?: string;            // [OpenAI Responses Container] Code-interpreter container from a prior turn (caller checks expiry before setting)
+  oaiContainerShare?: AIVndOaiBeamSandboxPolicy; // [OpenAI Responses Container] parallel callers (Beam): which requests reuse the history's container; omitted = 'all'
   gemEnvironmentId?: string;                  // [Gemini Interactions] Session/sandbox env id from a prior turn (today: Antigravity; no expiry on the wire; best-effort - no auto-fallback if upstream rejects)
 
   // Client-side tools (e.g., persona memory update)
@@ -261,7 +262,7 @@ interface AixClientOptions {
  */
 type _UC = NonNullable<DMessageGenerator['upstreamContainer']>;
 
-function _findRecentUpstreamContainer<Uct extends _UC['uct']>(history: readonly DMessage[], uct: Uct, expiryBufferMs = 15_000): Extract<_UC, { uct: Uct }> | null {
+function _findRecentUpstreamContainer<Uct extends _UC['uct']>(history: Immutable<DMessage[]>, uct: Uct, expiryBufferMs = 15_000): Extract<_UC, { uct: Uct }> | null {
   for (let i = history.length - 1; i >= 0; i--) {
     const uc = history[i].generator?.upstreamContainer;
     if (uc?.uct !== uct) continue;
@@ -273,6 +274,25 @@ function _findRecentUpstreamContainer<Uct extends _UC['uct']>(history: readonly 
   }
   return null;
 }
+
+
+/**
+ * [OpenAI Responses Container] Containers reused by OpenAI requests running right now, with their request count. OpenAI runs one
+ * request per container at a time: parallel requests on one container stall for minutes and can end in "Container is not
+ * running" (#1211). Under the 'first' Beam policy, a request skips a container held here and starts in a fresh one.
+ */
+const _oaiContainersInUse = new Map<string, number>();
+
+function _oaiContainerHold(containerId: string): void {
+  _oaiContainersInUse.set(containerId, (_oaiContainersInUse.get(containerId) ?? 0) + 1);
+}
+
+function _oaiContainerRelease(containerId: string): void {
+  const count = (_oaiContainersInUse.get(containerId) ?? 1) - 1;
+  if (count > 0) _oaiContainersInUse.set(containerId, count);
+  else _oaiContainersInUse.delete(containerId);
+}
+
 
 // --- L3 - Conversation-level generation (builds chat request, error wrapping) ---
 
@@ -291,8 +311,8 @@ export type AixChatGenerateContent_FromConversation_Result = {
 export async function aixChatGenerateContent_DMessage_FromConversation(
   // chat-inputs -> Partial<DMessage> outputs
   llmId: DLLMId,
-  chatSystemInstruction: null | Pick<DMessage, 'fragments' | 'metadata' | 'userFlags'>,
-  chatHistoryWithoutSystemMessages: Readonly<DMessage[]>,
+  chatSystemInstruction: null | Pick<Immutable<DMessage>, 'fragments' | 'metadata' | 'userFlags'>,
+  chatHistoryWithoutSystemMessages: Immutable<DMessage[]>,
   // aix inputs
   aixContextName: AixAPI_Context_ChatGenerate['name'],
   aixContextRef: AixAPI_Context_ChatGenerate['ref'],
@@ -307,6 +327,9 @@ export async function aixChatGenerateContent_DMessage_FromConversation(
     generator: { mgt: 'named', name: llmId },
     pendingIncomplete: true,
   };
+
+  // [OpenAI Responses Container] the container this request holds while it runs (see _oaiContainersInUse)
+  let oaiContainerHeld: string | undefined;
 
   try {
 
@@ -326,11 +349,21 @@ export async function aixChatGenerateContent_DMessage_FromConversation(
       const uc = _findRecentUpstreamContainer(chatHistoryWithoutSystemMessages, 'vnd.ant.container');
       if (uc) clientOptions = { ...clientOptions, antContainerId: uc.containerId };
     }
+
     if (!clientOptions.oaiContainerId) {
       // OpenAI Responses: expiresAt is stamped now+20min by the parser; the 15s buffer falls back to auto-create when stale.
-      const uc = _findRecentUpstreamContainer(chatHistoryWithoutSystemMessages, 'vnd.oai.container');
-      if (uc) clientOptions = { ...clientOptions, oaiContainerId: uc.containerId };
+      // Parallel callers (Beam) pass their sharing policy: under 'first', a request skips a container another one holds.
+      const oaiContainerShare = clientOptions.oaiContainerShare ?? 'all';
+      const uc = oaiContainerShare === 'none' ? null : _findRecentUpstreamContainer(chatHistoryWithoutSystemMessages, 'vnd.oai.container');
+      if (uc && !(oaiContainerShare === 'first' && _oaiContainersInUse.has(uc.containerId)))
+        clientOptions = { ...clientOptions, oaiContainerId: uc.containerId };
     }
+    // An OpenAI request holds its container until it ends, whether found above or passed in. Checked and held in one
+    // synchronous step: parallel requests interleave at every later await (L2), so a later hold would let all of them pass.
+    // Only OpenAI's API runs in the container: other targets get it but ignore it, so they don't hold it.
+    if (clientOptions.oaiContainerId && findLLMOrThrow(llmId).vId === 'openai')
+      _oaiContainerHold(oaiContainerHeld = clientOptions.oaiContainerId);
+
     if (!clientOptions.gemEnvironmentId) {
       const uc = _findRecentUpstreamContainer(chatHistoryWithoutSystemMessages, 'vnd.gem.interactions');
       if (uc) clientOptions = { ...clientOptions, gemEnvironmentId: uc.envId };
@@ -356,7 +389,7 @@ export async function aixChatGenerateContent_DMessage_FromConversation(
     const errorMessage = error.message || (typeof error === 'string' ? error : 'Chat stopped.');
     lastDMessage = {
       fragments: [...lastDMessage.fragments, createErrorContentFragment(`Issue: ${errorMessage}`)],
-      generator: { ...lastDMessage.generator, tokenStopReason: 'issue' },
+      generator: { ...lastDMessage.generator, tokenStopReason: 'issue', endedAt: Date.now() },
       pendingIncomplete: false,
     }
 
@@ -365,6 +398,11 @@ export async function aixChatGenerateContent_DMessage_FromConversation(
     await onStreamingUpdate(lastDMessage /* last we heard + the error */, true);
 
     return { outcome: 'failed', lastDMessage, outcomeFailedMessage: errorMessage };
+
+  } finally {
+
+    if (oaiContainerHeld)
+      _oaiContainerRelease(oaiContainerHeld);
 
   }
 }
@@ -416,7 +454,7 @@ export async function aixChatGenerateText_Simple(
 
   // Aix Model
   const llmParameters = getAllModelParameterValues(llm.initialParameters, clientOptions?.llmUserParametersReplacement ?? llm.userParameters);
-  const aixModel = aixCreateModelFromLLMOptions(llm.interfaces, llmParameters, clientOptions?.llmOptionsOverride, llmId);
+  const aixModel = aixCreateModelFromLLMOptions(llm.interfaces, llmParameters, clientOptions?.llmParamsWrite, llmId);
 
   // Aix ChatGenerate Request
   const aixChatGenerate = aixCGR_FromSimpleText(
@@ -500,6 +538,12 @@ export async function aixChatGenerateText_Simple(
   if (outcome === 'failed')
     throw new Error('AIX: Generation failed.');
 
+  // NOTE: a 'truncated' outcome returns the cut text as if complete - the callers (titles, briefings, follow-ups, summaries) cannot tell.
+  // Options, for a later iteration (every one changes the callers' contract):
+  //  1. throw a typed AixTruncatedError carrying the partial text - loud like 'failed', callers that want the partial text catch it
+  //  2. return { text, outcome } - every caller decides, every signature changes
+  //  3. keep returning the text and let callers read state.generator.tokenStopReason from the streaming callback (only the streaming ones can)
+
   // final update
   await onTextStreamUpdate?.(state.text, true, state.generator);
 
@@ -541,6 +585,7 @@ function _llToL2Simple({ fragments, generator }: AixChatGenerateContent_LL, dest
       case '_pt_sentinel': // impossible
         break;
       default:
+        // noinspection JSUnusedLocalSymbols
         const _exhaustiveCheck: never = pt;
     }
   }
@@ -608,7 +653,7 @@ export async function aixChatGenerateContent_DMessage_orThrow<TServiceSettings e
 
   // Aix Model
   const llmParameters = getAllModelParameterValues(llm.initialParameters, clientOptions?.llmUserParametersReplacement ?? llm.userParameters);
-  const aixModel = aixCreateModelFromLLMOptions(llm.interfaces, llmParameters, clientOptions?.llmOptionsOverride, llmId);
+  const aixModel = aixCreateModelFromLLMOptions(llm.interfaces, llmParameters, clientOptions?.llmParamsWrite, llmId);
   aixDecorateModelFromGlobals(aixModel, {
     vndAntContainerId: clientOptions?.antContainerId,
     vndOaiContainerId: clientOptions?.oaiContainerId,
@@ -667,12 +712,11 @@ export async function aixChatGenerateContent_DMessage_orThrow<TServiceSettings e
   if (metrics) dMessage.generator = { ...dMessage.generator, metrics };
   dMessage.pendingIncomplete = false;
 
-  // [#1114] resolve Gemini/Vertex AI grounding redirect links before the final 'done' update, so every
-  // caller (chat, Beam scatter/fusion, reattach) gets resolved links atomically with completion.
-  // Policy-gated (no-op unless 'resolve') and timeout-capped; failures keep the originals.
-  if (outcome === 'completed' && dMessage.fragments.length) {
-    const resolvedFragments = await vertexLinksAutoResolveFragments(dMessage.fragments);
-    if (resolvedFragments) dMessage.fragments = resolvedFragments;
+  // [#1114] resolve Gemini/Vertex AI grounding redirect links before the final update, so every caller (chat, Beam, reattach)
+  // gets them with completion; truncated too, as its partial content is shown
+  if ((outcome === 'completed' || outcome === 'truncated') && getVndGeminiVertexLinks() === 'resolve') {
+    const { rewritten } = await vertexLinksResolveFragments(dMessage.fragments, clientOptions.abortSignal);
+    if (rewritten.length) dMessage.fragments = dMessage.fragments.map(fragment => rewritten.find(({ fId }) => fId === fragment.fId) ?? fragment);
   }
 
   // final update
@@ -821,12 +865,19 @@ export interface AixChatGenerateContent_LL_Result extends AixChatGenerateContent
 }
 
 /**
- * Terminal state of a single LL generation call - why it stopped.
- * - 'completed': model responded normally (content may have tokenStopReason detail like out-of-tokens or filter)
- * - 'aborted': user cancelled
- * - 'failed': error occurred (error fragments carry the detail)
+ * Terminal state of a single LL generation call - why it stopped. The stored message's terminal outcome, which the
+ * reassembler derives from the final message (one outcome function, no parallel classification).
+ * - 'completed': model responded and stopped cleanly - the only success
+ * - 'truncated': model ran out of tokens - an error typed apart (warning, not danger); the partial output is kept, not usable
+ * - 'failed':    error occurred (error fragments carry the detail)
+ * - 'aborted':   user cancelled
  */
-export type AixChatGenerateTerminal_LL = 'completed' | 'aborted' | 'failed';
+export type AixChatGenerateTerminal_LL = DMessageTerminalOutcome;
+
+/** Boolean projection of the outcome: a clean completion and nothing else. */
+export function aixOutcomeIsSuccess(outcome: AixChatGenerateTerminal_LL): boolean {
+  return outcome === 'completed';
+}
 
 
 async function _aixChatGenerateContent_LL(...args: Parameters<typeof _aixChatGenerateContent_LL_unlocked>): Promise<AixChatGenerateContent_LL_Result> {
@@ -934,7 +985,7 @@ async function _aixChatGenerateContent_LL_unlocked(
   // - in tRPC mode the server-side transforms handle everything elegantly - but we still add failsafes in case the server has a transform issue
   const particleTransforms: ReassemblerParticleTransforms[] = [];
   if (aixAccess.dialect === 'anthropic' && aixModel.vndAntTransformInlineFiles /* && clientSideChatGenerate */)
-    particleTransforms.push(createClientAnthropicFileInlineTransform(aixAccess, aixModel.vndAntTransformInlineFiles === 'inline-file-and-delete'));
+    particleTransforms.push(createClientAnthropicFileInlineTransform(aixAccess, aixModel.vndAntTransformInlineFiles));
 
 
   // Particles Reassembler - owns the accumulator, reused across Client-side retries
@@ -962,7 +1013,7 @@ async function _aixChatGenerateContent_LL_unlocked(
   // Retry/Reconnect - LL state machine
   // - reconnect: for server overload/busy (429, 503, 502) and transient errors
   // - reattach: for network disconnects with uptream handles
-  const rsm = new AixStreamRetry(0, 0); // sensible: 3, 2
+  const rsm = new AixStreamRetry(0, 0); // keep off: latent bugs - the status is read from error.status (a TRPCClientError has none), and an abort during the backoff ends 'failed', not 'aborted'
 
   while (true) {
 

@@ -39,6 +39,9 @@ interface UIPreferencesStore {
   messageFullWidth: boolean; // stretch assistant messages to the full row
   setMessageFullWidth: (messageFullWidth: boolean) => void;
 
+  renderHTMLInitial: boolean;
+  setRenderHTMLInitial: (renderHTMLInitial: boolean) => void;
+
   renderCodeLineNumbers: boolean;
   setRenderCodeLineNumbers: (renderCodeLineNumbers: boolean) => void;
 
@@ -67,6 +70,11 @@ interface UIPreferencesStore {
 
   aixInspector: boolean;
   toggleAixInspector: () => void;
+
+  // Developer features
+
+  devsUISymbolHighlight: boolean;
+  toggleDevsUISymbolHighlight: () => void;
 
   // UI Dismissals
 
@@ -119,6 +127,9 @@ export const useUIPreferencesStore = create<UIPreferencesStore>()(
       messageFullWidth: false,
       setMessageFullWidth: (messageFullWidth: boolean) => set({ messageFullWidth }),
 
+      renderHTMLInitial: true,
+      setRenderHTMLInitial: (renderHTMLInitial: boolean) => set({ renderHTMLInitial }),
+
       renderCodeLineNumbers: false,
       setRenderCodeLineNumbers: (renderCodeLineNumbers: boolean) => set({ renderCodeLineNumbers }),
 
@@ -148,6 +159,11 @@ export const useUIPreferencesStore = create<UIPreferencesStore>()(
 
       aixInspector: false,
       toggleAixInspector: () => set((state) => ({ aixInspector: !state.aixInspector })),
+
+      // Developer features
+
+      devsUISymbolHighlight: false,
+      toggleDevsUISymbolHighlight: () => set((state) => ({ devsUISymbolHighlight: !state.devsUISymbolHighlight })),
 
       // UI Dismissals
 
@@ -236,6 +252,11 @@ export function getUIEnterIsNewline(): boolean {
 
 export function getAixInspectorEnabled(): boolean {
   return useUIPreferencesStore.getState().aixInspector;
+}
+
+
+export function getRenderHTMLInitial(): boolean {
+  return useUIPreferencesStore.getState().renderHTMLInitial;
 }
 
 

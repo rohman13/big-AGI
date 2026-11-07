@@ -2,6 +2,7 @@ import * as z from 'zod/v4';
 
 // Used to align Particles to the Typescript definitions from the frontend-side, on 'chat.fragments.ts'
 import type { DMessageFragmentVendorStateKnown, DMessageToolResponsePart } from '~/common/stores/chat/chat.fragments';
+import type { DMessageGenerator } from '~/common/stores/chat/chat.message';
 
 import { anthropicAccessSchema } from '~/modules/llms/server/anthropic/anthropic.access';
 import { bedrockAccessSchema } from '~/modules/llms/server/bedrock/bedrock.access';
@@ -558,7 +559,7 @@ export namespace AixWire_API {
     vndAntSkills: z.string().optional(),
     vndAntThinkingBudget: z.number().or(z.literal('adaptive')).nullable().optional(),
     vndAntToolSearch: z.enum(['regex', 'bm25']).optional(), // Tool Search Tool variant
-    vndAntTransformInlineFiles: z.enum(['inline-file', 'inline-file-and-delete']).optional(),
+    vndAntTransformInlineFiles: z.enum(['inline-file', 'inline-file-and-delete', 'discard']).optional(), // 'discard': delete upstream without embedding, a void notice in the chat
     vndAntWebDynamic: z.boolean().optional(),
     vndAntWebFetch: z.enum(['auto']).optional(),
     vndAntWebFetchMaxUses: z.number().int().min(1).max(50).optional(),
@@ -571,7 +572,7 @@ export namespace AixWire_API {
     // Gemini
     vndGeminiAPI: z.enum(['interactions-agent']).optional(), // opt-in per-model API dialect; unset = generateContent
     vndGeminiAgentViz: z.enum(['auto', 'off']).optional(), // agent_config.visualization; default 'auto' upstream
-    vndGeminiAspectRatio: z.enum(['1:1', '2:3', '3:2', '3:4', '4:3', '9:16', '16:9', '21:9']).optional(),
+    vndGeminiAspectRatio: z.enum(['1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9', '21:9', '1:4', '4:1', '1:8', '8:1']).optional(),
     vndGeminiCodeExecution: z.enum(['auto']).optional(),
     vndGeminiComputerUse: z.enum(['browser']).optional(),
     vndGeminiEnvironmentId: z.string().optional(), // [vndGeminiAPI === 'interactions-agent'] Gemini Interactions API session/sandbox handle from a prior turn (forward-carry; best-effort - if upstream rejects the env, the request fails and the error surfaces)
@@ -589,7 +590,7 @@ export namespace AixWire_API {
     vndOaiContainerId: z.string().optional(), // [Responses] reuse a prior code-interpreter session container (caller checks expiry before setting)
     vndOaiImageGeneration: z.enum(['mq', 'hq', 'max', 'hq_edit' /* legacy -> hq */, 'hq_png' /* legacy -> hq */]).optional(), // legacy values still accepted from older bundles
     vndOaiReasoningMode: z.enum(['standard', 'pro']).optional(), // [2026-07-09, OpenAI] [Responses] GPT-5.6+ reasoning.mode - 'pro' performs additional model work, billed at standard rates
-    vndOaiServiceTier: z.enum(['flex', 'fast']).optional(), // [2026-09-03, OpenAI] request service_tier: flex (0.5x, slower) | fast (2x, faster); native OpenAI only
+    vndOaiServiceTier: z.enum(['flex', 'fast', 'ultrafast']).optional(), // [2026-09-03, OpenAI] request service_tier: flex (0.5x, slower) | fast (2x, faster) | ultrafast (6x, fastest; Responses only, 2026-09-29); native OpenAI only
     vndOaiResponsesAPI: z.boolean().optional(),
     vndOaiRestoreMarkdown: z.boolean().optional(),
     vndOaiVerbosity: z.enum(['low', 'medium', 'high']).optional(),
@@ -760,14 +761,13 @@ export namespace AixWire_Particles {
   export type ChatControlOp =
   // | { cg: 'start' } // not really used for now
     | { cg: 'end', terminationReason: CGEndReason /* we know why we're sending 'end' */, tokenStopReason?: GCTokenStopReason /* we may or not have gotten a logical token stop reason from the dispatch */, tokenStopError?: string /* optional vendor-composed human-readable detail paired with tokenStopReason */ }
-    | { cg: 'issue', issueId: CGIssueId, issueText: string }
+    | { cg: 'issue', issueId: CGIssueId, issueText: string, issueCause?: CGIssueCause }
     | { cg: 'aix-info', ait: 'flow-cont' /* important: establishes a checkpoint */, text: string }
-    | { cg: 'aix-retry-reset', rScope: 'srv-dispatch' | 'srv-op' | 'cli-ll', rClearStrategy: 'none' | 'since-checkpoint' | 'all', reason: string, attempt: number, maxAttempts: number, delayMs: number, causeHttp?: number, causeConn?: string }
+    | { cg: 'aix-retry-reset', rScope: 'srv-dispatch' | 'srv-op' | 'cli-ll', rClearStrategy: 'none' | 'since-checkpoint' | 'all', reason: string, attempt: number, maxAttempts: number, delayMs: number, causeHttp?: number, causeConn?: string, calm?: true /* the retry profile marks the condition as expected (e.g. a busy best-effort tier): rendered without alarm */ }
     | { cg: 'set-metrics', metrics: CGSelectMetrics }
     | { cg: 'set-model', name: string }
     | { cg: 'set-provider-infra', label: string }
     | { cg: 'set-upstream-handle', handle: { uht: 'vnd.oai.responses' | 'vnd.gem.interactions', runId: string, createdAt: number | null, expiresAt: number | null } }
-    | { cg: 'input-transform', itt: 'thinking-dropped', cause: 'history-edited' | 'model-switch' | (string & {}), reason: string, paths: string[] } // the server rewrote our request: dropped replayed thinking blocks, one particle per vendor reason; `cause` normalizes `reason` (open set), `paths` are wire locations; client-side log for now
     | { cg: '_debugDispatchRequest', security: 'dev-env', dispatchRequest: { url: string, headers: string, body: string, bodySize: number } } // may generalize this in the future
     | { cg: '_debugProfiler', measurements: Record<string, number | string>[] };
 
@@ -785,15 +785,55 @@ export namespace AixWire_Particles {
     | 'dispatch-read'           // [2] "
     | 'dispatch-parse';         // [2] "
 
-  export type GCTokenStopReason =
+  export type CGIssueCause = _CGIssueCause_DispatchFetch;
+  type _CGIssueCause_DispatchFetch = {
+    causeConn?: string;         // [dispatch-fetch] system error name of a failed connection
+    causeHttpStatus?: number;   // [dispatch-fetch] upstream HTTP status
+    causeVendorCode?: string;   // [dispatch-fetch] vendor error code from the HTTP body
+  }
+
+
+  // Token stop reasons, grouped by class. The class is the one grouping shared by the edge (analytics) and the
+  // browser (reassembler outcome): 'ok' is the only success, 'truncated' is an error typed apart, 'error' is the rest.
+  export type GCTokenStopReason = _GCTokenStopReason_Ok | _GCTokenStopReason_Truncated | _GCTokenStopReason_Error;
+  type _GCTokenStopReason_Ok =
     | 'ok'                      // clean, including reaching 'stop sequences'
-    | 'ok-tool_invocations'     // clean & tool invocations
-    // premature:
+    | 'ok-tool_invocations';    // clean & tool invocations
+  type _GCTokenStopReason_Truncated =
+    | 'out-of-tokens';          // got out of tokens: the output is cut, kept but not usable as-is
+  type _GCTokenStopReason_Error =
     | 'cg-issue'                // [1][2] chat-generation issue (see CGIssueId, mostly a dispatch or dialect issue)
     | 'filter-content'          // content filter (e.g. profanity)
     | 'filter-recitation'       // recitation filter (e.g. recitation)
-    | 'filter-refusal'          // safety refusal filter (e.g. Anthropic safety concerns)
-    | 'out-of-tokens';          // got out of tokens
+    | 'filter-refusal';         // safety refusal filter (e.g. Anthropic safety concerns)
+
+  type GCStopClass = 'ok' | 'truncated' | 'error';
+
+  /** The projections of one wire stop reason: the class (edge analytics), the stored stop reason (DMessageGenerator.tokenStopReason, the client's persisted fact), the user-facing message appended on a cut */
+  export type GCStopReasonRow = { class: GCStopClass; stored: DMessageGenerator['tokenStopReason']; message?: string };
+
+  /** One row per wire stop reason, read through gcStopReasonRow() only: a wire value may be unknown to this build. */
+  const GC_STOP_REASONS = {
+    'ok':                  { class: 'ok', stored: undefined },
+    'ok-tool_invocations': { class: 'ok', stored: undefined },
+    'out-of-tokens':       { class: 'truncated', stored: 'out-of-tokens' },
+    'cg-issue':            { class: 'error', stored: 'issue' },
+    // emitted by: OpenAI content_filter, Gemini SAFETY/BLOCKLIST/PROHIBITED_CONTENT/SPII/IMAGE_*, Bedrock content filter
+    'filter-content':      { class: 'error', stored: 'filter', message: 'Response blocked by the provider\'s content filter.' },
+    // emitted by: Gemini RECITATION/IMAGE_RECITATION (note: can be FP-prone on benign content like code/quotes)
+    'filter-recitation':   { class: 'error', stored: 'filter', message: 'Response blocked - potential copyrighted/recited content.' },
+    // emitted by: Anthropic stop_reason=refusal, Gemini LANGUAGE (unsupported)
+    'filter-refusal':      { class: 'error', stored: 'filter', message: 'Response refused by the provider\'s safety classifier.' },
+  } as const satisfies Record<GCTokenStopReason, GCStopReasonRow>;
+
+  /** Row of a wire stop reason; undefined for a reason this build does not know (a newer server or peer). Own keys only: `in` passes 'toString'. */
+  export function gcStopReasonRow(reason: string): GCStopReasonRow | undefined {
+    return _isGCTokenStopReason(reason) ? GC_STOP_REASONS[reason] : undefined;
+  }
+
+  function _isGCTokenStopReason(reason: string): reason is GCTokenStopReason {
+    return Object.hasOwn(GC_STOP_REASONS, reason);
+  }
 
   /**
    * NOTE: break compatibility with this D-stored-type only when we'll
@@ -813,6 +853,8 @@ export namespace AixWire_Particles {
 
     // n = Counts of per-call billed server tools
     nWebSearch?: number,  // web searches executed
+    nWebFetch?: number,   // web fetches executed
+    nCodeExec?: number,   // hosted code executions, container sub-tools included
 
     // dt = milliseconds
     dtStart?: number,
@@ -855,6 +897,19 @@ export namespace AixWire_Particles {
      */
     | { p: /*'mo'*/ 'vp', opId: string, text: string, mot: 'search-web' | 'gen-image' | 'code-exec', state?: 'done' | 'error', parentOpId?: string, iTexts?: string[], oTexts?: string[] }
     | { p: 'urlc', title: string, url: string, num?: number, from?: number, to?: number, text?: string, pubTs?: number } // url citation - pubTs: publication timestamp
+    /**
+     * Void Notice - inline, display-only, dismissible, never sent upstream.
+     * - `text`/`detail` are the common rendering, composed by the sender; `detail` may use a markdown subset:
+     *   blank-line paragraphs, '- ' bullets, inline **label**, *excerpt* and `code`
+     * - `nt` (notice type) carries the structured facts of each notice, so clients can later filter, log
+     *   or render a type specially without re-parsing text; add a variant per new notice, no catch-all
+     */
+    | { p: 'vnt', text: string, detail?: string, level?: 'warn' } & ( // `level` 'warn': the sender judged this notice unexpected (e.g. a reasoning reset inside a paused turn); default is informational
+      | { nt: 'input-transform', itt: 'thinking-dropped', cause: 'prefix-changed' | 'model-switch' | (string & {}), reason: string, paths: string[] } // the server rewrote our request: dropped replayed thinking blocks, one particle per vendor reason; `cause` normalizes `reason` (open set), `paths` are wire locations. 'prefix-changed' is deliberately unspecific: the vendor's 'prefix_binding_mismatch' covers system/tools/message edits alike and doesn't say which - don't narrow it to "history edited" in copy, that's provably wrong for tool/system changes. client-side log for now
+      | { nt: 'hres-discarded', kind: 'vnd.ant.file', fileId: string, filename?: string } // a provider-hosted file deleted by the Save policy without embedding; it may still exist in the model's sandbox
+      | { nt: 'flow-cont', kind: 'vnd.ant.pause_turn', turn: number } // the generation continued in a new upstream request at this point (hosted-tool loop paused itself); rendered as a divider, `turn` is the 1-based continuation count
+      | { nt: 'late-issue', issueId: CGIssueId } // an issue that arrived after the vendor's stop reason (stream cut before the end marker, a trailing chunk failing to parse, a late error event): the response is complete, so it is not content
+      )
     | { p: 'hres' } & ( // hosted resource - provider-hosted resource
       | { kind: 'vnd.ant.file', fileId: string, containerId?: string }
       | { kind: 'vnd.gem.file', fileName: string, mimeType: string, isVideo?: boolean } // [Gemini Omni] Files-API artifact (e.g. delivery:uri video): re-fetchable by `files/{id}` name for ~48h via the key-proxied Gemini download route
